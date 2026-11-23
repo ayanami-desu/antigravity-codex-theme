@@ -16,7 +16,10 @@ import {
 } from '../core/daemon/prompt-suggest.mjs';
 import {
   DAEMON_BOOT_ID,
+  buildNormalizedVisualConfig,
+  buildSettingsClientConfig,
   createBundleController,
+  isLightweightVisualPatch,
   sanitizeConfigPatch
 } from '../core/daemon/paths.mjs';
 import {
@@ -149,6 +152,10 @@ test('sanitizeConfigPatch validates whitelisted fields and preserves untouched c
   };
 
   const next = sanitizeConfigPatch(baseCfg, {
+    showMascot: false,
+    mascotSize: 'lg',
+    bgDim: 'high',
+    glassBlur: false,
     telemetryLayout: 'detailed',
     telemetryCacheMode: 'invalid-mode',
     promptSuggestionModel: 'gemini-4-neon-xhigh',
@@ -163,6 +170,10 @@ test('sanitizeConfigPatch validates whitelisted fields and preserves untouched c
 
   assert.equal(next.preset, 'codex-pure-white');
   assert.deepEqual(next.themeVars, { '--ag-chat-font-size': '14px' });
+  assert.equal(next.showMascot, false);
+  assert.equal(next.mascotSize, 'lg');
+  assert.equal(next.bgDim, 'high');
+  assert.equal(next.glassBlur, undefined);
   assert.equal(next.telemetryLayout, 'detailed');
   assert.equal(next.telemetryCacheMode, 'session', 'invalid cache mode should be ignored');
   assert.equal(next.promptSuggestionModel, 'gemini-4-neon-xhigh');
@@ -1912,4 +1923,394 @@ test('cdp-bridge.mjs __agRequestPromptSuggestion forwards suggestWithMeta comple
     globalThis.WebSocket = OrigWebSocket;
     await new Promise((resolve) => server.close(resolve));
   }
+});
+
+test('buildSettingsClientConfig preserves mascotVariant, restricts mascotPosition, and isLightweightVisualPatch isolates visual tweaks', () => {
+  const defVisual = buildNormalizedVisualConfig({});
+  assert.equal(defVisual.mascotPosition, 'content-left');
+  assert.equal('showBg' in defVisual, false);
+
+  const normalizedLegacyPos = buildNormalizedVisualConfig({ mascotPosition: 'bottom-right' });
+  assert.equal(normalizedLegacyPos.mascotPosition, 'content-left');
+
+  const visual = buildNormalizedVisualConfig({ mascotPosition: 'sidebar', mascotVariant: '3', bgDim: 'low' });
+  assert.equal(visual.mascotVariant, '3');
+  assert.equal(visual.mascotPosition, 'sidebar');
+
+  const clientCfg = buildSettingsClientConfig(Object.assign({}, visual, { modules: { theme: true } }));
+  assert.equal('showBg' in clientCfg, false);
+  assert.equal('glassBlur' in clientCfg, false);
+  assert.equal(clientCfg.mascotPosition, 'sidebar');
+  assert.equal(clientCfg.mascotVariant, '3');
+  assert.equal(clientCfg.bgDim, 'low');
+
+  assert.equal(isLightweightVisualPatch({ bgDim: 'high' }, clientCfg), true);
+  assert.equal(isLightweightVisualPatch({ mascotPosition: 'content-left', mascotVariant: '3', mascotSize: 'lg' }, clientCfg), true);
+  assert.equal(isLightweightVisualPatch({ showMascot: false }, clientCfg), false);
+  assert.equal(isLightweightVisualPatch({ telemetryLayout: 'detailed' }, clientCfg), false);
+  assert.equal(isLightweightVisualPatch({ bgDim: 'low' }, { enabled: false }), false);
+});
+
+test('createBundleController excludes assets from plugin script, excludes removed wallpapers, and hashes assets in version', () => {
+  const ctrl = createBundleController({ safeMode: false, hasSqlite: false });
+  assert.equal(ctrl.rebuildBundleIfNeeded(true), true);
+  const st = ctrl.getState();
+  assert.equal('showBg' in st.activeConfig, false);
+  assert.equal(st.activeConfig.mascotPosition, 'content-left');
+  assert.equal(st.activeConfig.mascotVariant !== undefined, true);
+  assert.ok(st.cachedPluginInjectScript.length > 1000);
+  assert.ok(st.cachedInjectScript.length > st.cachedPluginInjectScript.length);
+  assert.ok(!st.cachedInjectScript.includes('"mascotUrl":'));
+  assert.ok(st.cachedPluginInjectScript.includes('"themeAssets":{"mascotUrls":{},"composerIdleUrl":"","composerTypingUrl":""}'));
+  assert.equal(st.cachedInjectScript.includes('"bgUrl"'), false);
+  assert.equal(st.cachedInjectScript.includes('"bgLightUrl"'), false);
+  assert.ok(st.cachedInjectScript.includes('"mascotUrls":{"1":"data:image/webp;base64,'));
+  assert.match(st.cachedPatchVersion, /^\d+\.\d+\.\d+-(?:stable|insiders)-[a-f0-9]{8}$/);
+});
+
+test('20-theme-sync runtime blurs only on scoped non-drag outside clicks, avoids span/p scans, and updates visual config in place', () => {
+  const themeSyncSrc = fs.readFileSync(path.join(ROOT_DIR, 'core', 'runtime', '20-theme-sync.js'), 'utf8');
+  assert.equal(themeSyncSrc.includes('span, p, button, a'), false, 'avoidance measurement must use O(1) containers');
+
+  const code = ['00-head.js', '20-theme-sync.js', '90-tail.js']
+    .map((f) => fs.readFileSync(path.join(ROOT_DIR, 'core', 'runtime', f), 'utf8'))
+    .join('\n');
+
+  const docAttrs = new Map();
+  const inputAttrs = new Map();
+  const listeners = new Map();
+  const timers = [];
+  const appendedToInput = [];
+  let blurCalls = 0;
+
+  const editorEl = {
+    nodeType: 1,
+    tagName: 'DIV',
+    blur() {
+      blurCalls += 1;
+    }
+  };
+  const inputBox = {
+    id: 'antigravity.agentSidePanelInputBox',
+    style: { setProperty() {} },
+    children: [],
+    setAttribute: (k, v) => inputAttrs.set(k, v),
+    getAttribute: (k) => inputAttrs.get(k) ?? null,
+    removeAttribute: (k) => inputAttrs.delete(k),
+    contains: (n) => n === inputBox || n === editorEl,
+    closest: () => null,
+    getBoundingClientRect: () => ({ left: 100, right: 600, top: 700, bottom: 780, width: 500, height: 80 }),
+    appendChild(el) {
+      el.parentNode = inputBox;
+      appendedToInput.push(el);
+    }
+  };
+
+  const headChildren = [];
+  const headEl = { appendChild(el) { el.parentNode = headEl; headChildren.push(el); } };
+  const fakeDoc = {
+    head: headEl,
+    body: {
+      nodeType: 1,
+      tagName: 'BODY',
+      classList: { contains: () => false },
+      style: { removeProperty() {} },
+      prepend() {},
+      appendChild() {}
+    },
+    hidden: false,
+    hasFocus: () => true,
+    activeElement: editorEl,
+    documentElement: {
+      style: { colorScheme: 'light', removeProperty() {} },
+      setAttribute: (k, v) => docAttrs.set(k, v),
+      getAttribute: (k) => docAttrs.get(k) ?? null,
+      removeAttribute: (k) => docAttrs.delete(k)
+    },
+    getElementById(id) {
+      if (id === 'antigravity.agentSidePanelInputBox') return inputBox;
+      return headChildren.find((e) => e.id === id) || appendedToInput.find((e) => e.id === id) || null;
+    },
+    createElement: (tag) => ({
+      tagName: tag.toUpperCase(),
+      id: '',
+      textContent: '',
+      style: { setProperty() {}, removeProperty() {} },
+      setAttribute() {},
+      getAttribute: () => null,
+      removeAttribute() {},
+      remove() {}
+    }),
+    getElementsByTagName: (t) => (t === 'head' ? [headEl] : []),
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    addEventListener(evt, fn) {
+      listeners.set(evt, fn);
+    },
+    removeEventListener() {}
+  };
+
+  const sandbox = {
+    location: { pathname: '/', href: 'http://127.0.0.1/', search: '' },
+    navigator: { platform: 'MacIntel', onLine: true },
+    history: { pushState() {}, replaceState() {} },
+    addEventListener() {},
+    removeEventListener() {},
+    getSelection: () => ({ isCollapsed: true, toString: () => '' }),
+    setInterval: () => 1,
+    clearInterval() {},
+    setTimeout(fn) {
+      timers.push(fn);
+      return timers.length;
+    },
+    clearTimeout(id) {
+      if (id > 0 && id <= timers.length) timers[id - 1] = null;
+    },
+    requestAnimationFrame: () => 1,
+    document: fakeDoc,
+    localStorage: { getItem: () => null, setItem() {} },
+    Storage: { prototype: { getItem: () => null, setItem() {} } },
+    MutationObserver: class { observe() {} disconnect() {} },
+    __AG_BOOT_PAYLOAD__: {
+      version: '1.3.1-test',
+      platform: 'darwin',
+      enabled: true,
+      showMascot: true,
+      mascotPosition: 'sidebar',
+      mascotVariant: 'auto',
+      mascotSize: 'md',
+      bgDim: 'medium',
+      themeAssets: { bgUrl: '', mascotUrls: { '1': 'data:image/webp;base64,AAA' }, composerIdleUrl: 'data:image/webp;base64,BBB', composerTypingUrl: 'data:image/webp;base64,CCC' },
+      cssText: 'body{}',
+      customCss: '',
+      themeVars: {},
+      i18nDict: {},
+      modules: { theme: true, i18n: false, metrics: false, promptSuggestions: false, deadlockHealer: false, zoomShortcuts: false },
+      selectors: {},
+      userConfig: { modules: { theme: true } },
+      customJs: ''
+    }
+  };
+  sandbox.window = sandbox;
+  sandbox.top = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(`const __AG_BOOT_PAYLOAD__ = globalThis.__AG_BOOT_PAYLOAD__;\n${code}`, sandbox);
+
+  // Even without outerSidebar in DOM, companion still mounts independently on #antigravity.agentSidePanelInputBox
+  assert.equal(appendedToInput.some((el) => el.id === 'ag-composer-companion'), true);
+  assert.equal(inputAttrs.get('data-ag-composer-active'), '1');
+  assert.equal(docAttrs.get('data-ag-composer-active'), '1');
+
+  // Pointerdown + drag selection outside does NOT blur composer editor
+  const onPointerDown = listeners.get('pointerdown');
+  const onPointerUp = listeners.get('pointerup');
+  const outsideTarget = { closest: () => null };
+  onPointerDown({ target: outsideTarget, clientX: 50, clientY: 50 });
+  assert.equal(blurCalls, 0, 'pointerdown must never immediately blur');
+  onPointerUp({ target: outsideTarget, clientX: 90, clientY: 50 });
+  for (const fn of timers.splice(0)) if (fn) fn();
+  assert.equal(blurCalls, 0, 'drag selection (>6px) must preserve focus without blur');
+
+  // Clean non-drag click outside blurs composer after pointerup cleanly
+  onPointerDown({ target: outsideTarget, clientX: 50, clientY: 50 });
+  onPointerUp({ target: outsideTarget, clientX: 51, clientY: 51 });
+  for (const fn of timers.splice(0)) if (fn) fn();
+  assert.equal(inputAttrs.get('data-ag-composer-active'), undefined);
+  assert.equal(docAttrs.get('data-ag-composer-active'), undefined);
+  assert.equal(blurCalls, 1);
+
+  // Lightweight runtime config update updates attributes + version without full reinject
+  const ok = sandbox.__ag_apply_visual_config({ bgDim: 'low', mascotVariant: '3', mascotSize: 'lg' }, '1.3.1-next');
+  assert.equal(ok, true);
+  assert.equal(docAttrs.get('data-ag-bg-dim'), 'low');
+  assert.equal(docAttrs.get('data-ag-glass-blur'), undefined);
+  assert.equal(docAttrs.get('data-ag-mascot-variant'), '3');
+  assert.equal(docAttrs.get('data-ag-mascot-size'), 'lg');
+  assert.equal(sandbox.__ag_patch_version, '1.3.1-next');
+});
+
+test('45-settings-ui.css keeps neutral native tokens by default and scopes Starlight styling to data-ag-preset', () => {
+  const settingsCss = fs.readFileSync(path.join(ROOT_DIR, 'core', 'styles', '45-settings-ui.css'), 'utf8');
+  const starlightStart = settingsCss.indexOf('html[data-ag-preset^="starlight"]');
+  assert.ok(starlightStart > 0, 'Starlight tokens must be scoped under html[data-ag-preset^="starlight"]');
+
+  const neutralSection = settingsCss.slice(0, starlightStart);
+  assert.ok(neutralSection.includes('--ag-s-bg: var(--background, #FFFFFF);'));
+  assert.ok(neutralSection.includes('--ag-s-primary: #2B7FFF;'));
+  assert.ok(neutralSection.includes('--ag-s-bg: var(--background, #181818);'));
+  assert.ok(neutralSection.includes('--ag-s-primary: #2C67C5;'));
+  assert.equal(neutralSection.includes('--ag-s-primary-grad:'), false, 'Neutral defaults must not define Starlight gradient');
+  assert.equal(neutralSection.includes('#FAF7FF'), false, 'Neutral defaults must not leak Starlight light background');
+  assert.equal(neutralSection.includes('#141226'), false, 'Neutral defaults must not leak Starlight dark background');
+
+  const starlightSection = settingsCss.slice(starlightStart);
+  assert.ok(starlightSection.includes('--ag-s-bg: #FAF7FF;'));
+  assert.ok(starlightSection.includes('--ag-s-bg: #141226;'));
+  assert.ok(starlightSection.includes('--ag-s-primary-grad: linear-gradient(135deg, #7C3AED 0%, #EC4899 100%);'));
+  assert.ok(starlightSection.includes('--ag-s-primary-grad: linear-gradient(135deg, #8B5CF6 0%, #EC4899 100%);'));
+});
+
+test('20-theme-sync mounts lightweight aurora #ag-anime-bg-layer, stages mascot at content-left, and avoids costly animations', () => {
+  const baseCss = fs.readFileSync(path.join(ROOT_DIR, 'core', 'styles', '00-base.css'), 'utf8');
+  assert.ok(baseCss.includes('inset: 0;'));
+  assert.equal(baseCss.includes('.ag-anime-bg-right'), false);
+  assert.equal(baseCss.includes('agMascotFloat'), false);
+  assert.equal(baseCss.includes('agMascotAuraPulse'), false);
+  assert.equal(baseCss.includes('agStarlightSpin'), false);
+  assert.equal(baseCss.includes('backdrop-filter: blur'), false);
+  assert.ok(baseCss.includes('var(--ag-aurora-canvas'));
+  assert.ok(baseCss.includes('data-ag-mascot-pos="content-left"'));
+  assert.ok(baseCss.includes('[data-main-content-header="true"]'));
+  assert.ok(baseCss.includes('var(--ag-topbar-bg'));
+  assert.ok(baseCss.includes('var(--ag-sidebar-surface'));
+
+  const code = ['00-head.js', '20-theme-sync.js', '90-tail.js']
+    .map((f) => fs.readFileSync(path.join(ROOT_DIR, 'core', 'runtime', f), 'utf8'))
+    .join('\n');
+
+  const docAttrs = new Map();
+  const created = [];
+  const headChildren = [];
+  const headEl = { appendChild(el) { el.parentNode = headEl; headChildren.push(el); } };
+  const outerSidebar = {
+    classList: { contains: (c) => c === 'bg-sidebar' || c === 'flex-col' || c === 'h-full' },
+    closest: () => null,
+    setAttribute() {},
+    getBoundingClientRect: () => ({ left: 0, right: 256, width: 256, height: 1080 })
+  };
+  const mainBody = {
+    getBoundingClientRect: () => ({ left: 256, right: 1728, width: 1472, height: 1080 })
+  };
+  const mainHeader = {
+    getBoundingClientRect: () => ({ left: 257, right: 1728, top: 0, bottom: 40, width: 1471, height: 40 })
+  };
+  const inputBox = {
+    id: 'antigravity.agentSidePanelInputBox',
+    style: { setProperty() {} },
+    setAttribute() {},
+    removeAttribute() {},
+    contains: () => false,
+    closest: () => mainBody,
+    appendChild() {},
+    getBoundingClientRect: () => ({ left: 608, right: 1376, top: 960, bottom: 1040, width: 768, height: 80 })
+  };
+  const fakeDoc = {
+    head: headEl,
+    body: {
+      nodeType: 1,
+      tagName: 'BODY',
+      classList: { contains: () => false },
+      style: { removeProperty() {} },
+      prepend(el) { el.parentNode = fakeDoc.body; created.push(el); },
+      insertBefore(el) { el.parentNode = fakeDoc.body; created.push(el); },
+      appendChild(el) { el.parentNode = fakeDoc.body; created.push(el); }
+    },
+    hidden: false,
+    hasFocus: () => true,
+    activeElement: null,
+    documentElement: {
+      style: { colorScheme: 'light', removeProperty() {} },
+      setAttribute: (k, v) => docAttrs.set(k, v),
+      getAttribute: (k) => docAttrs.get(k) ?? null,
+      removeAttribute: (k) => docAttrs.delete(k)
+    },
+    getElementById(id) {
+      if (id === 'antigravity.agentSidePanelInputBox') return inputBox;
+      return headChildren.find((e) => e.id === id) || created.find((e) => e.id === id) || null;
+    },
+    createElement: (tag) => {
+      const styleMap = new Map();
+      const el = {
+        tagName: tag.toUpperCase(),
+        id: '',
+        className: '',
+        children: [],
+        textContent: '',
+        style: {
+          setProperty(k, v) { styleMap.set(k, v); },
+          getPropertyValue(k) { return styleMap.get(k) || ''; },
+          removeProperty(k) { styleMap.delete(k); }
+        },
+        _styleMap: styleMap,
+        setAttribute() {},
+        getAttribute: () => null,
+        removeAttribute() {},
+        appendChild(ch) {
+          ch.parentNode = el;
+          el.children.push(ch);
+        },
+        querySelector: () => null,
+        remove() {}
+      };
+      return el;
+    },
+    getElementsByTagName: (t) => (t === 'head' ? [headEl] : []),
+    querySelector: (sel) => {
+      if (sel === '[data-main-content-header="true"]') return mainHeader;
+      if (sel === '[data-main-content-body]') return mainBody;
+      return null;
+    },
+    querySelectorAll: (sel) => (sel === '.bg-sidebar' ? [outerSidebar] : []),
+    addEventListener() {},
+    removeEventListener() {}
+  };
+  const sandbox = {
+    innerWidth: 1728,
+    innerHeight: 1080,
+    location: { pathname: '/', href: 'http://127.0.0.1/', search: '' },
+    navigator: { platform: 'MacIntel', onLine: true },
+    history: { pushState() {}, replaceState() {} },
+    addEventListener() {},
+    removeEventListener() {},
+    getComputedStyle: () => ({ display: 'flex', visibility: 'visible', getPropertyValue: () => '' }),
+    setInterval: () => 1,
+    clearInterval() {},
+    setTimeout: () => 1,
+    clearTimeout() {},
+    requestAnimationFrame: () => 1,
+    document: fakeDoc,
+    localStorage: { getItem: () => null, setItem() {} },
+    Storage: { prototype: { getItem: () => null, setItem() {} } },
+    MutationObserver: class { observe() {} disconnect() {} },
+    ResizeObserver: class { observe() {} disconnect() {} },
+    __AG_BOOT_PAYLOAD__: {
+      version: '1.3.1-test',
+      platform: 'darwin',
+      enabled: true,
+      showMascot: true,
+      mascotPosition: 'content-left',
+      mascotSize: 'lg',
+      themeAssets: {
+        mascotUrls: { '1': 'data:image/webp;base64,CCC' }
+      },
+      cssText: 'body{}',
+      customCss: '',
+      themeVars: {},
+      i18nDict: {},
+      modules: { theme: true, i18n: false, metrics: false, promptSuggestions: false, deadlockHealer: false, zoomShortcuts: false },
+      selectors: {},
+      userConfig: { modules: { theme: true } },
+      customJs: ''
+    }
+  };
+  sandbox.window = sandbox;
+  sandbox.top = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(`const __AG_BOOT_PAYLOAD__ = globalThis.__AG_BOOT_PAYLOAD__;\n${code}`, sandbox);
+  const bgLayer = created.find((e) => e.id === 'ag-anime-bg-layer');
+  assert.ok(bgLayer, '#ag-anime-bg-layer should mount for aurora canvas');
+  assert.equal(docAttrs.get('data-ag-show-bg'), undefined);
+  assert.equal(docAttrs.get('data-ag-mascot-pos'), 'content-left');
+  assert.equal(bgLayer.children.length, 0);
+
+  const mascotLayer = created.find((e) => e.id === 'ag-anime-mascot-layer');
+  assert.ok(mascotLayer, 'mascot should mount on document.body in content-left mode');
+  const leftPx = parseInt(mascotLayer._styleMap.get('--ag-mascot-left'), 10);
+  const scaleVal = parseFloat(mascotLayer._styleMap.get('--ag-mascot-scale'));
+  assert.ok(leftPx >= 256 && leftPx < 608, `expected mascot left within left gutter, got ${leftPx}`);
+  assert.ok(scaleVal > 0.7 && scaleVal <= 1, `expected generous scale in 352px gutter, got ${scaleVal}`);
+
+  // Unsupported bottom-right ignores or normalizes cleanly
+  sandbox.__ag_apply_visual_config({ mascotPosition: 'bottom-right' }, '1.3.1-pos-norm');
+  assert.equal(docAttrs.get('data-ag-mascot-pos'), 'content-left');
 });

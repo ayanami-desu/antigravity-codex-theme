@@ -16,7 +16,7 @@ import {
   getDaemonPidCandidateDirs,
   terminateDaemonPids
 } from '../shared.mjs';
-import { ROOT_DIR, scanUserInstalledFonts } from './paths.mjs';
+import { ROOT_DIR, buildSettingsClientConfig, isLightweightVisualPatch, scanUserInstalledFonts } from './paths.mjs';
 import { createCdpRelaunchController } from './cdp-relaunch.mjs';
 
 export const ALLOWED_EXTERNAL_LINKS = Object.freeze({
@@ -513,6 +513,7 @@ export function createCdpManager({
         let activeCascadeIds = [];
         const pushedSessions = new Map();
         let evalScriptId = null;
+        let evalConfigScriptId = null;
         let hostConfirmed = isSwarmIframe;
         let currentTargetUrl = target.url || '';
         const pendingCallbacks = new Map();
@@ -558,11 +559,11 @@ export function createCdpManager({
           });
 
         const buildEffectiveScript = () => {
-          const { cachedInjectScript } = bundleCtrl.getState();
+          const { cachedInjectScript, cachedPluginInjectScript } = bundleCtrl.getState();
           if (!isSwarmIframe) return cachedInjectScript;
           const inheritedMode = resolveParentThemeMode(target.id, endpoint.channel);
           const preamble = inheritedMode ? `window.__ag_host_theme_mode = ${JSON.stringify(inheritedMode)};\n` : '';
-          return `${preamble}${cachedInjectScript}`;
+          return `${preamble}${cachedPluginInjectScript || cachedInjectScript}`;
         };
 
         const verifyHostTarget = async () => {
@@ -591,6 +592,10 @@ export function createCdpManager({
         const updateNewDocScript = async () => {
           if (!hostConfirmed) return;
           const { activeConfig } = bundleCtrl.getState();
+          if (evalConfigScriptId) {
+            await send('Page.removeScriptToEvaluateOnNewDocument', { identifier: evalConfigScriptId });
+            evalConfigScriptId = null;
+          }
           if (evalScriptId) {
             await send('Page.removeScriptToEvaluateOnNewDocument', { identifier: evalScriptId });
             evalScriptId = null;
@@ -601,6 +606,34 @@ export function createCdpManager({
               evalScriptId = addRes.result.identifier;
             }
           }
+        };
+
+        const updateLightConfigNewDocScript = async (visualCfg, version) => {
+          if (!hostConfirmed || isSwarmIframe) return;
+          const { activeConfig } = bundleCtrl.getState();
+          if (evalConfigScriptId) {
+            await send('Page.removeScriptToEvaluateOnNewDocument', { identifier: evalConfigScriptId });
+            evalConfigScriptId = null;
+          }
+          if (activeConfig.enabled && evalScriptId) {
+            const src = `window.__ag_override_visual = ${JSON.stringify(visualCfg)}; if (typeof window.__ag_apply_visual_config === 'function') { window.__ag_apply_visual_config(${JSON.stringify(visualCfg)}, ${JSON.stringify(version)}); }`;
+            const addRes = await send('Page.addScriptToEvaluateOnNewDocument', { source: src });
+            if (addRes?.result?.identifier) {
+              evalConfigScriptId = addRes.result.identifier;
+            }
+          }
+        };
+
+        const applyVisualConfig = async (visualCfg, version) => {
+          if (!hostConfirmed) return false;
+          const res = await send('Runtime.evaluate', {
+            expression: `(() => {
+              if (typeof window.__ag_apply_visual_config !== 'function' || !document.getElementById('ag-codex-theme')) return false;
+              return window.__ag_apply_visual_config(${JSON.stringify(visualCfg)}, ${JSON.stringify(version)}) !== false;
+            })()`,
+            returnByValue: true
+          });
+          return res?.result?.result?.value === true;
         };
 
         const inject = async () => {
@@ -1062,17 +1095,7 @@ export function createCdpManager({
                 const out = {
                   ok: true,
                   version: cachedPatchVersion,
-                  config: {
-                    enabled: activeConfig.enabled,
-                    telemetryLayout: activeConfig.telemetryLayout,
-                    telemetryCacheMode: activeConfig.telemetryCacheMode,
-                    quotaStyle: activeConfig.quotaStyle,
-                    quotaOtherStyle: activeConfig.quotaOtherStyle,
-                    fonts: Object.assign({ mode: 'global', global: '', ui: '', chat: '', code: '' }, activeConfig.fonts || {}),
-                    promptSuggestionModel: activeConfig.promptSuggestionModel,
-                    sshHosts: Array.isArray(activeConfig.sshHosts) ? activeConfig.sshHosts : [],
-                    modules: Object.assign({}, activeConfig.modules)
-                  },
+                  config: buildSettingsClientConfig(activeConfig),
                   agyStatus,
                   modelsInfo,
                   installedFonts
@@ -1108,7 +1131,7 @@ export function createCdpManager({
                   if (promptSuggester && typeof promptSuggester.syncState === 'function') {
                     promptSuggester.syncState();
                   }
-                  const { activeConfig } = bundleCtrl.getState();
+                  const { activeConfig, cachedPatchVersion } = bundleCtrl.getState();
                   if (sshRemoteCtrl && typeof sshRemoteCtrl.syncState === 'function') {
                     sshRemoteCtrl.syncState({
                       enabled: Boolean(activeConfig.enabled && activeConfig.modules?.sshRemote),
@@ -1118,9 +1141,20 @@ export function createCdpManager({
                   if (!activeConfig.enabled) {
                     targetThemeModes.clear();
                   }
+                  const lightweight = isLightweightVisualPatch(patch, activeConfig);
+                  const visualClientCfg = buildSettingsClientConfig(activeConfig);
                   for (const entry of attachedTargets.values()) {
                     if (!entry.hostConfirmed) continue;
                     try {
+                      if (lightweight && entry.applyVisualConfig) {
+                        const applied = await entry.applyVisualConfig(visualClientCfg, cachedPatchVersion);
+                        if (applied) {
+                          if (!entry.isSwarmIframe && entry.updateLightConfigNewDocScript) {
+                            await entry.updateLightConfigNewDocScript(visualClientCfg, cachedPatchVersion);
+                          }
+                          continue;
+                        }
+                      }
                       if (entry.updateNewDocScript) await entry.updateNewDocScript();
                       if (entry.inject) await entry.inject();
                       if (entry.syncMetricsForSession) await entry.syncMetricsForSession(true);
@@ -1136,17 +1170,7 @@ export function createCdpManager({
                   ok: Boolean(writeRes.ok),
                   error: writeRes.error || '',
                   version: cachedPatchVersion,
-                  config: {
-                    enabled: activeConfig.enabled,
-                    telemetryLayout: activeConfig.telemetryLayout,
-                    telemetryCacheMode: activeConfig.telemetryCacheMode,
-                    quotaStyle: activeConfig.quotaStyle,
-                    quotaOtherStyle: activeConfig.quotaOtherStyle,
-                    fonts: Object.assign({ mode: 'global', global: '', ui: '', chat: '', code: '' }, activeConfig.fonts || {}),
-                    promptSuggestionModel: activeConfig.promptSuggestionModel,
-                    sshHosts: Array.isArray(activeConfig.sshHosts) ? activeConfig.sshHosts : [],
-                    modules: Object.assign({}, activeConfig.modules)
-                  },
+                  config: buildSettingsClientConfig(activeConfig),
                   agyStatus
                 };
                 if (ws.readyState === WebSocket.OPEN) {
@@ -1222,6 +1246,8 @@ export function createCdpManager({
           ws,
           send,
           updateNewDocScript,
+          updateLightConfigNewDocScript,
+          applyVisualConfig,
           inject,
           checkAndInject,
           syncMetricsForSession,

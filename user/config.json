@@ -1,7 +1,11 @@
 {
   "enabled": true,
   "channel": "auto",
-  "preset": "codex-pure-white",
+  "preset": "starlight-dark",
+  "showMascot": true,
+  "mascotPosition": "content-left",
+  "mascotSize": "md",
+  "bgDim": "medium",
   "telemetryLayout": "compact",
   "telemetryCacheMode": "session",
   "quotaStyle": "segments",
@@ -14,6 +18,7 @@
     "code": ""
   },
   "contextLimit": "auto",
+  "promptSuggestionModel": "gemini-3.8-flash-low",
   "modules": {
     "theme": true,
     "i18n": true,

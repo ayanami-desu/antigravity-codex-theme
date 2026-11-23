@@ -12,6 +12,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 export const ROOT_DIR = path.resolve(__dirname, '../..');
 export const CORE_DIR = path.join(ROOT_DIR, 'core');
+export const ASSETS_DIR = path.join(CORE_DIR, 'assets');
 export const STYLES_DIR = path.join(CORE_DIR, 'styles');
 export const RUNTIME_DIR = path.join(CORE_DIR, 'runtime');
 export const USER_DIR = path.join(ROOT_DIR, 'user');
@@ -192,6 +193,81 @@ export function normalizeFontsConfig(raw) {
   };
 }
 
+function readWebpDataUrlSafe(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return '';
+    const buf = fs.readFileSync(filePath);
+    if (!buf || buf.length === 0) return '';
+    return `data:image/webp;base64,${buf.toString('base64')}`;
+  } catch {
+    return '';
+  }
+}
+
+export const LIGHTWEIGHT_VISUAL_KEYS = new Set([
+  'mascotPosition',
+  'mascotVariant',
+  'mascotSize',
+  'bgDim'
+]);
+
+export function buildNormalizedVisualConfig(userCfg = {}, { safeMode = false, cliChannel = null } = {}) {
+  const cfg = safeMode ? {} : userCfg && typeof userCfg === 'object' ? userCfg : {};
+  const enabled = safeMode ? true : cfg.enabled !== false;
+  const channel = cliChannel || cfg.channel || 'auto';
+  const presetRaw = String(cfg.preset || 'starlight-dark').trim();
+  const preset =
+    presetRaw === 'codex-pure-white' || presetRaw === 'starlight-light' ? 'starlight-light' : 'starlight-dark';
+  const showMascot = typeof cfg.showMascot === 'boolean' ? cfg.showMascot : true;
+  const mascotPosition = cfg.mascotPosition === 'sidebar' ? 'sidebar' : 'content-left';
+  const rawVariant = String(cfg.mascotVariant || 'auto').trim();
+  const mascotVariant =
+    rawVariant === '1' || rawVariant === '2' || rawVariant === '3' || rawVariant === '4' ? rawVariant : 'auto';
+  const mascotSize = cfg.mascotSize === 'sm' || cfg.mascotSize === 'lg' ? cfg.mascotSize : 'md';
+  const bgDim = cfg.bgDim === 'low' || cfg.bgDim === 'high' ? cfg.bgDim : 'medium';
+  const telemetryLayout = cfg.telemetryLayout === 'detailed' ? 'detailed' : 'compact';
+  const telemetryCacheMode = cfg.telemetryCacheMode === 'step' ? 'step' : 'session';
+  return {
+    enabled,
+    channel,
+    preset,
+    showMascot,
+    mascotPosition,
+    mascotVariant,
+    mascotSize,
+    bgDim,
+    telemetryLayout,
+    telemetryCacheMode
+  };
+}
+
+export function isLightweightVisualPatch(patch, activeConfig) {
+  if (!patch || typeof patch !== 'object') return false;
+  if (!activeConfig || activeConfig.enabled === false) return false;
+  const keys = Object.keys(patch).filter((k) => patch[k] !== undefined);
+  return keys.length > 0 && keys.every((k) => LIGHTWEIGHT_VISUAL_KEYS.has(k));
+}
+
+export function buildSettingsClientConfig(activeConfig = {}) {
+  const visual = buildNormalizedVisualConfig(activeConfig);
+  return {
+    enabled: visual.enabled,
+    showMascot: visual.showMascot,
+    mascotPosition: visual.mascotPosition,
+    mascotVariant: visual.mascotVariant,
+    mascotSize: visual.mascotSize,
+    bgDim: visual.bgDim,
+    telemetryLayout: visual.telemetryLayout,
+    telemetryCacheMode: visual.telemetryCacheMode,
+    quotaStyle: VALID_QUOTA_STYLES.has(activeConfig.quotaStyle) ? activeConfig.quotaStyle : 'segments',
+    quotaOtherStyle: VALID_QUOTA_OTHER_STYLES.has(activeConfig.quotaOtherStyle) ? activeConfig.quotaOtherStyle : 'lines',
+    fonts: normalizeFontsConfig(activeConfig.fonts),
+    promptSuggestionModel: activeConfig.promptSuggestionModel || 'gemini-3.8-flash-low',
+    sshHosts: Array.isArray(activeConfig.sshHosts) ? activeConfig.sshHosts : [],
+    modules: Object.assign({}, activeConfig.modules || {})
+  };
+}
+
 export function sanitizeConfigPatch(currentCfg, patch) {
   const base = currentCfg && typeof currentCfg === 'object' ? JSON.parse(JSON.stringify(currentCfg)) : {};
   if (!patch || typeof patch !== 'object') return base;
@@ -231,6 +307,21 @@ export function sanitizeConfigPatch(currentCfg, patch) {
     }
     base.fonts = next;
   }
+  if (typeof patch.showMascot === 'boolean') {
+    base.showMascot = patch.showMascot;
+  }
+  if (patch.mascotPosition === 'content-left' || patch.mascotPosition === 'sidebar') {
+    base.mascotPosition = patch.mascotPosition;
+  }
+  if (patch.mascotVariant === 'auto' || patch.mascotVariant === '1' || patch.mascotVariant === '2' || patch.mascotVariant === '3' || patch.mascotVariant === '4') {
+    base.mascotVariant = patch.mascotVariant;
+  }
+  if (patch.mascotSize === 'sm' || patch.mascotSize === 'md' || patch.mascotSize === 'lg') {
+    base.mascotSize = patch.mascotSize;
+  }
+  if (patch.bgDim === 'low' || patch.bgDim === 'medium' || patch.bgDim === 'high') {
+    base.bgDim = patch.bgDim;
+  }
   if (typeof patch.promptSuggestionModel === 'string') {
     const m = patch.promptSuggestionModel.trim();
     if (m && !m.startsWith('-') && VALID_SUGGEST_MODEL_RE.test(m)) {
@@ -262,47 +353,54 @@ export function createBundleController({
 } = {}) {
   let cachedBundleSig = '';
   let cachedInjectScript = '';
+  let cachedPluginInjectScript = '';
   let cachedPatchVersion = '';
   let cachedCoreHash = '';
-  let activeConfig = {
-    enabled: true,
-    channel: 'auto',
-    preset: 'codex-pure-white',
-    telemetryLayout: 'compact',
-    telemetryCacheMode: 'session',
-    quotaStyle: 'segments',
-    quotaOtherStyle: 'lines',
-    fonts: { mode: 'global', global: '', ui: '', chat: '', code: '' },
-    contextLimit: 'auto',
-    manualContextLimit: 0,
-    fallbackContextLimit: 256000,
-    promptSuggestionModel: 'gemini-3.8-flash-low',
-    modules: {
-      theme: true,
-      i18n: true,
-      metrics: Boolean(hasSqlite),
-      quota: true,
-      quotaSidebar: true,
-      sshRemote: false,
-      promptSuggestions: false,
-      deadlockHealer: true,
-      zoomShortcuts: true,
-      cdpAutoRelaunch: true,
-      customCss: true,
-      customJs: true
-    },
-    sshHosts: [],
-    themeVars: {},
-    selectors: {},
-    allowedOrigins: DEFAULT_ALLOWED_ORIGINS,
-    endpoints: []
-  };
+  let activeConfig = Object.assign(
+    buildNormalizedVisualConfig({}, { safeMode, cliChannel }),
+    {
+      quotaStyle: 'segments',
+      quotaOtherStyle: 'lines',
+      fonts: { mode: 'global', global: '', ui: '', chat: '', code: '' },
+      contextLimit: 'auto',
+      manualContextLimit: 0,
+      fallbackContextLimit: 256000,
+      promptSuggestionModel: 'gemini-3.8-flash-low',
+      modules: {
+        theme: true,
+        i18n: true,
+        metrics: Boolean(hasSqlite),
+        quota: true,
+        quotaSidebar: true,
+        sshRemote: false,
+        promptSuggestions: false,
+        deadlockHealer: true,
+        zoomShortcuts: true,
+        cdpAutoRelaunch: true,
+        customCss: true,
+        customJs: true
+      },
+      sshHosts: [],
+      themeVars: {},
+      selectors: {},
+      allowedOrigins: DEFAULT_ALLOWED_ORIGINS,
+      endpoints: []
+    }
+  );
 
   function rebuildBundleIfNeeded(force = false) {
     const styleFiles = listSortedFiles(STYLES_DIR, '.css');
     const runtimeFiles = listSortedFiles(RUNTIME_DIR, '.js');
     const manifestPath = path.join(CORE_DIR, 'manifest.json');
-    const coreFiles = [...styleFiles, path.join(CORE_DIR, 'i18n.json'), manifestPath, ...runtimeFiles];
+    const assetFiles = [
+      path.join(ASSETS_DIR, 'starlight-catgirl-1.webp'),
+      path.join(ASSETS_DIR, 'starlight-catgirl-2.webp'),
+      path.join(ASSETS_DIR, 'starlight-catgirl-3.webp'),
+      path.join(ASSETS_DIR, 'starlight-catgirl-4.webp'),
+      path.join(ASSETS_DIR, 'starlight-composer-idle.webp'),
+      path.join(ASSETS_DIR, 'starlight-composer-typing.webp')
+    ];
+    const coreFiles = [...styleFiles, path.join(CORE_DIR, 'i18n.json'), manifestPath, ...runtimeFiles, ...assetFiles];
     const userFiles = safeMode
       ? []
       : [
@@ -323,12 +421,19 @@ export function createBundleController({
     }
 
     const userCfg = safeMode ? {} : readJsonSafe(path.join(USER_DIR, 'config.json'), {});
-    const enabled = safeMode ? true : userCfg.enabled !== false;
-    const channel = cliChannel || userCfg.channel || 'auto';
-    const presetRaw = String(userCfg.preset || 'codex-pure-white').trim();
-    const preset = presetRaw === 'codex-dark' || presetRaw === 'onyx-dark' ? 'codex-dark' : 'codex-pure-white';
-    const telemetryLayout = userCfg.telemetryLayout === 'detailed' ? 'detailed' : 'compact';
-    const telemetryCacheMode = userCfg.telemetryCacheMode === 'step' ? 'step' : 'session';
+    const visualCfg = buildNormalizedVisualConfig(userCfg, { safeMode, cliChannel });
+    const {
+      enabled,
+      channel,
+      preset,
+      showMascot,
+      mascotPosition,
+      mascotVariant,
+      mascotSize,
+      bgDim,
+      telemetryLayout,
+      telemetryCacheMode
+    } = visualCfg;
     const quotaStyle = VALID_QUOTA_STYLES.has(userCfg.quotaStyle) ? userCfg.quotaStyle : 'segments';
     const quotaOtherStyle = VALID_QUOTA_OTHER_STYLES.has(userCfg.quotaOtherStyle) ? userCfg.quotaOtherStyle : 'lines';
     const fonts = normalizeFontsConfig(safeMode ? {} : userCfg.fonts);
@@ -423,12 +528,7 @@ export function createBundleController({
         ? rawPromptModel
         : 'gemini-3.8-flash-low';
 
-    activeConfig = {
-      enabled,
-      channel,
-      preset,
-      telemetryLayout,
-      telemetryCacheMode,
+    activeConfig = Object.assign({}, visualCfg, {
       quotaStyle,
       quotaOtherStyle,
       fonts,
@@ -442,7 +542,7 @@ export function createBundleController({
       selectors: normalizedSelectors,
       allowedOrigins: Array.isArray(userCfg.allowedOrigins) ? userCfg.allowedOrigins : DEFAULT_ALLOWED_ORIGINS,
       endpoints
-    };
+    });
 
     const allStyleEntries = styleFiles.map((filePath) => ({
       filePath,
@@ -472,6 +572,29 @@ export function createBundleController({
     const mergedDict = modules.i18n ? Object.assign({}, baseDict, normalizeOverrideDict(rawOverrideDict)) : {};
     const customJs = !safeMode && modules.customJs ? readTextSafe(path.join(USER_DIR, 'custom.js'), '') : '';
     const runtimeTemplate = runtimeFiles.map((f) => readTextSafe(f, '')).join('\n');
+    const emptyAssets = {
+      mascotUrls: {},
+      composerIdleUrl: '',
+      composerTypingUrl: ''
+    };
+    const themeAssets =
+      enabled && modules.theme !== false && showMascot
+        ? (() => {
+            const m1 = readWebpDataUrlSafe(path.join(ASSETS_DIR, 'starlight-catgirl-1.webp'));
+            const m2 = readWebpDataUrlSafe(path.join(ASSETS_DIR, 'starlight-catgirl-2.webp')) || m1;
+            const m3 = readWebpDataUrlSafe(path.join(ASSETS_DIR, 'starlight-catgirl-3.webp')) || m1;
+            const m4 = readWebpDataUrlSafe(path.join(ASSETS_DIR, 'starlight-catgirl-4.webp')) || m1;
+            const composerIdleUrl = readWebpDataUrlSafe(path.join(ASSETS_DIR, 'starlight-composer-idle.webp'));
+            const composerTypingUrl = readWebpDataUrlSafe(path.join(ASSETS_DIR, 'starlight-composer-typing.webp'));
+            return {
+              mascotUrls: { '1': m1, '2': m2, '3': m3, '4': m4 },
+              composerIdleUrl,
+              composerTypingUrl
+            };
+          })()
+        : emptyAssets;
+
+    const assetDigest = crypto.createHash('sha256').update(JSON.stringify(themeAssets)).digest('hex');
 
     const manifestText = readTextSafe(manifestPath, '');
     const coreHasher = crypto.createHash('sha256').update(BASE_VERSION);
@@ -497,20 +620,20 @@ export function createBundleController({
       .update(customCss)
       .update(JSON.stringify(mergedDict))
       .update(customJs)
+      .update(assetDigest)
       .update(
-        JSON.stringify({
-          preset,
-          telemetryLayout,
-          telemetryCacheMode,
-          quotaStyle,
-          quotaOtherStyle,
-          fonts,
-          promptSuggestionModel,
-          sshHosts: activeConfig.sshHosts,
-          modules,
-          themeVars,
-          selectors: activeConfig.selectors
-        })
+        JSON.stringify(
+          Object.assign({}, visualCfg, {
+            quotaStyle,
+            quotaOtherStyle,
+            fonts,
+            promptSuggestionModel,
+            sshHosts: activeConfig.sshHosts,
+            modules,
+            themeVars,
+            selectors: activeConfig.selectors
+          })
+        )
       )
       .digest('hex')
       .slice(0, 8);
@@ -518,30 +641,23 @@ export function createBundleController({
     const channelTag = channel === 'insiders' ? 'insiders' : 'stable';
     cachedPatchVersion = `${BASE_VERSION}-${channelTag}-${hash}`;
 
-    const bootPayload = {
+    const baseBootPayload = {
       version: cachedPatchVersion,
       coreHash: cachedCoreHash,
       daemonBootId,
       platform: process.platform,
-      enabled,
-      preset,
-      telemetryLayout,
-      telemetryCacheMode,
+      ...visualCfg,
       quotaStyle,
       quotaOtherStyle,
       fonts,
+      themeAssets,
       cssText: baseCss,
       customCss,
       themeVars,
       i18nDict: mergedDict,
       modules,
       selectors: activeConfig.selectors,
-      userConfig: {
-        enabled,
-        channel,
-        preset,
-        telemetryLayout,
-        telemetryCacheMode,
+      userConfig: Object.assign({}, visualCfg, {
         quotaStyle,
         quotaOtherStyle,
         fonts,
@@ -550,13 +666,17 @@ export function createBundleController({
         sshHosts: activeConfig.sshHosts,
         modules,
         themeVars
-      },
+      }),
       customJs
     };
 
     cachedInjectScript = runtimeTemplate.replace(
       '})(__AG_BOOT_PAYLOAD__);',
-      () => `})(${JSON.stringify(bootPayload)});`
+      () => `})(${JSON.stringify(baseBootPayload)});`
+    );
+    cachedPluginInjectScript = runtimeTemplate.replace(
+      '})(__AG_BOOT_PAYLOAD__);',
+      () => `})(${JSON.stringify(Object.assign({}, baseBootPayload, { themeAssets: emptyAssets }))});`
     );
     cachedBundleSig = sig;
     return true;
@@ -594,6 +714,7 @@ export function createBundleController({
     getState: () => ({
       activeConfig,
       cachedInjectScript,
+      cachedPluginInjectScript,
       cachedPatchVersion,
       cachedCoreHash,
       daemonBootId

@@ -928,6 +928,9 @@
       curModel: typeof getSelectedModelLabel === 'function' ? getSelectedModelLabel(inputBox) : ''
     });
     ps.lastSnap = snap;
+    if (paneKey === 'main' && document.documentElement) {
+      document.documentElement.setAttribute('data-ag-agent-state', snap.visualState || 'idle');
+    }
 
     const routeVisible =
       isMetricsRouteActive(pane) || snap.visualState === 'error' || snap.visualState === 'slow' || snap.isExecuting;

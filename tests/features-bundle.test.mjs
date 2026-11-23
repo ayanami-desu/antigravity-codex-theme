@@ -219,7 +219,7 @@ test('Assembled partial runtime bundles execute without ReferenceError when opti
     if (!sc.modules.theme) {
       assert.equal(docAttrs.get('data-ag-preset'), undefined, `${sc.name} must not set theme preset attr`);
     } else {
-      assert.equal(docAttrs.get('data-ag-preset'), 'codex-pure-white');
+      assert.equal(docAttrs.get('data-ag-preset'), 'starlight-light');
     }
   }
 });

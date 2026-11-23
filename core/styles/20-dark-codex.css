@@ -1,5 +1,5 @@
 /* ============================================================================
- * core/styles/20-dark-codex.css — Dark Mode: Codex Neutral Charcoal Dark
+ * core/styles/20-dark-codex.css — Dark Mode: Starlight Sakura Night Glass
  * ============================================================================ */
 
 html[data-ag-theme-mode="dark"],
@@ -10,91 +10,116 @@ body.theme-dark,
 body[data-agy-theme].dark,
 html[data-ag-preset] body.dark,
 html[data-ag-preset] body[data-agy-theme].dark {
-  --background: #181818 !important;
-  --content: #181818 !important;
-  --foreground: #FFFFFF !important;
-  --primary: #2C67C5 !important;
+  --ag-root-bg: #0B0915;
+  --ag-aurora-canvas:
+    radial-gradient(ellipse 48% 58% at 22% 72%, rgba(139, 92, 246, 0.20) 0%, rgba(168, 85, 247, 0.07) 52%, transparent 78%),
+    radial-gradient(ellipse 44% 46% at 88% 14%, rgba(236, 72, 153, 0.13) 0%, rgba(168, 85, 247, 0.05) 48%, transparent 76%),
+    radial-gradient(ellipse 52% 36% at 58% 98%, rgba(124, 58, 237, 0.13) 0%, transparent 72%),
+    linear-gradient(180deg, #0D0B1A 0%, #090712 100%);
+  --ag-side-panel-bg: rgba(18, 16, 36, 0.94);
+  --ag-sidebar-surface: #110F22;
+  --ag-sash-hairline: rgba(196, 181, 253, 0.11);
+  --ag-topbar-bg: rgba(13, 11, 26, 0.95);
+  --ag-topbar-border: rgba(196, 181, 253, 0.10);
+  --ag-mascot-opacity: 0.97;
+
+  --background: #141226 !important;
+  --content: rgba(18, 16, 36, 0.92) !important;
+  --foreground: #F5F3FF !important;
+  --primary: #A855F7 !important;
   --primary-foreground: #FFFFFF !important;
-  --editor-selection-background: rgba(44, 103, 197, 0.38) !important;
-  --editor-comment-selection-background: rgba(44, 103, 197, 0.24) !important;
-  --shell: #232323 !important;
-  --sidebar: #232323 !important;
-  --vscode-sideBar-background: #232323 !important;
-  --sidebar-secondary: #353535 !important;
-  --sidebar-muted: rgba(255, 255, 255, 0.06) !important;
-  --sidebar-border: rgba(255, 255, 255, 0.08) !important;
-  --secondary: rgba(255, 255, 255, 0.08) !important;
-  --secondary-foreground: #DEDEDE !important;
-  --muted: rgba(255, 255, 255, 0.05) !important;
-  --muted-foreground: #959595 !important;
-  --placeholder: #787878 !important;
-  --card: #232323 !important;
-  --card-border: rgba(255, 255, 255, 0.09) !important;
-  --card-edge: rgba(255, 255, 255, 0.08) !important;
-  --sash-line: rgba(255, 255, 255, 0.09) !important;
-  --border: rgba(255, 255, 255, 0.08) !important;
-  --glass: #282828 !important;
-  --glass-border: rgba(255, 255, 255, 0.09) !important;
-  --glass-highlight: rgba(255, 255, 255, 0.06) !important;
-  --scrim: rgba(0, 0, 0, 0.65) !important;
-  --onyx-frame: #282828 !important;
-  --onyx-well: #232323 !important;
-  --onyx-raised: #363636 !important;
-  --onyx-selected: #353535 !important;
-  --onyx-key: #303030 !important;
+  --editor-selection-background: rgba(168, 85, 247, 0.35) !important;
+  --editor-comment-selection-background: rgba(244, 114, 182, 0.24) !important;
+  --shell: rgba(16, 14, 32, 0.72) !important;
+  --sidebar: rgba(16, 14, 32, 0.72) !important;
+  --vscode-sideBar-background: rgba(16, 14, 32, 0.72) !important;
+  --sidebar-secondary: rgba(167, 139, 250, 0.16) !important;
+  --sidebar-muted: rgba(196, 181, 253, 0.08) !important;
+  --sidebar-border: rgba(196, 181, 253, 0.13) !important;
+  --secondary: rgba(196, 181, 253, 0.10) !important;
+  --secondary-foreground: #EAE6FF !important;
+  --muted: rgba(196, 181, 253, 0.07) !important;
+  --muted-foreground: #A69EC9 !important;
+  --placeholder: #8379AB !important;
+  --card: rgba(24, 21, 46, 0.72) !important;
+  --card-border: rgba(196, 181, 253, 0.16) !important;
+  --card-edge: rgba(196, 181, 253, 0.14) !important;
+  --sash-line: rgba(196, 181, 253, 0.14) !important;
+  --border: rgba(196, 181, 253, 0.14) !important;
+  --glass: rgba(26, 22, 50, 0.78) !important;
+  --glass-border: rgba(196, 181, 253, 0.18) !important;
+  --glass-highlight: rgba(244, 114, 182, 0.10) !important;
+  --scrim: rgba(8, 7, 18, 0.68) !important;
+  --onyx-frame: rgba(22, 19, 42, 0.78) !important;
+  --onyx-well: rgba(16, 14, 32, 0.72) !important;
+  --onyx-raised: rgba(32, 28, 60, 0.86) !important;
+  --onyx-selected: rgba(167, 139, 250, 0.18) !important;
+  --onyx-key: rgba(34, 30, 62, 0.86) !important;
   --home-glow: transparent !important;
-  --error: #E55353 !important;
+  --error: #FB7185 !important;
   --warning: #FBBF24 !important;
-  --link: #60A5FA !important;
+  --link: #C4B5FD !important;
   --success: #34D399 !important;
 
-  --ag-composer-tray-bg: #262626;
-  --ag-composer-tray-border: transparent;
-  --ag-composer-card-bg: #363636;
-  --ag-composer-card-border: rgba(255, 255, 255, 0.07);
-  --ag-composer-card-shadow: 0 3px 12px rgba(0, 0, 0, 0.24), 0 1px 3px rgba(0, 0, 0, 0.18);
-  --ag-composer-card-focus-border: rgba(255, 255, 255, 0.12);
-  --ag-composer-card-focus-shadow: 0 5px 18px rgba(0, 0, 0, 0.34), 0 2px 5px rgba(0, 0, 0, 0.22);
-  --ag-composer-top-fg: #D4D4D4;
-  --ag-composer-top-hover-bg: rgba(255, 255, 255, 0.08);
+  --ag-sidebar-btn-bg: rgba(167, 139, 250, 0.16);
+  --ag-sidebar-btn-hover-bg: rgba(167, 139, 250, 0.25);
+  --ag-composer-tray-bg: rgba(20, 17, 40, 0.80);
+  --ag-composer-tray-border: rgba(196, 181, 253, 0.14);
+  --ag-composer-card-bg: rgba(29, 25, 56, 0.97);
+  --ag-composer-card-border: rgba(196, 181, 253, 0.22);
+  --ag-composer-card-shadow: 0 8px 28px rgba(8, 6, 22, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --ag-composer-card-focus-border: rgba(192, 132, 252, 0.50);
+  --ag-composer-card-focus-shadow: 0 12px 34px rgba(139, 92, 246, 0.24), 0 2px 14px rgba(236, 72, 153, 0.14), 0 0 0 2px rgba(168, 85, 247, 0.12);
+  --ag-composer-top-fg: #E2DCFF;
+  --ag-composer-top-hover-bg: rgba(167, 139, 250, 0.16);
   --ag-composer-top-hover-fg: #FFFFFF;
-  --ag-composer-ctrl-fg: #DEDEDE;
-  --ag-send-btn-bg: #2C67C5;
-  --ag-send-btn-hover-bg: #3774D6;
-  --ag-send-btn-border: rgba(255, 255, 255, 0.12);
-  --ag-send-btn-shadow: 0 2px 6px rgba(0, 0, 0, 0.28);
+  --ag-composer-ctrl-fg: #EBE6FF;
+  --ag-send-btn-bg: linear-gradient(135deg, #8B5CF6 0%, #EC4899 100%);
+  --ag-send-btn-hover-bg: linear-gradient(135deg, #9D71FF 0%, #F472B6 100%);
+  --ag-send-btn-border: rgba(244, 114, 182, 0.48);
+  --ag-send-btn-shadow: 0 2px 12px rgba(168, 85, 247, 0.38);
+  --ag-msg-img-border: rgba(196, 181, 253, 0.56);
+  --ag-msg-img-mat: rgba(34, 26, 62, 0.88);
+  --ag-msg-img-shadow: 0 8px 22px rgba(8, 6, 22, 0.58), 0 0 0 1px rgba(244, 114, 182, 0.18);
+  --ag-msg-img-hover-border: rgba(244, 114, 182, 0.82);
+  --ag-msg-img-hover-shadow: 0 12px 28px rgba(8, 6, 22, 0.68), 0 0 14px rgba(168, 85, 247, 0.42);
+  --ag-popover-bg: rgba(22, 19, 44, 0.95);
 
-  --ag-sidebar-fg: #DEDEDE;
-  --ag-sidebar-row-fg: #CFCFCF;
-  --ag-sidebar-header-fg: #B8B8B8;
-  --ag-sidebar-header-title-fg: #EAEAEA;
+  --ag-sidebar-fg: #EBE6FF;
+  --ag-sidebar-row-fg: #DAD3FA;
+  --ag-sidebar-header-fg: #C4BBE8;
+  --ag-sidebar-header-title-fg: #F5F3FF;
   --ag-sidebar-selected-fg: #FFFFFF;
-  --ag-sidebar-muted-fg: #8E8E8E;
-  --ag-menu-item-fg: #E8E8E8;
-  --ag-menu-header-fg: #959595;
+  --ag-sidebar-muted-fg: #9D93C4;
+  --ag-menu-item-fg: #F2EEFF;
+  --ag-menu-header-fg: #B8AFDE;
   --ag-dialog-title-fg: #FFFFFF;
-  --ag-dialog-item-fg: #E8E8E8;
-  --code-foreground: #ECECEC !important;
+  --ag-dialog-item-fg: #EDE9FE;
+  --code-foreground: #F2EEFF !important;
 }
 
-/* Codex neutral dark-gray rounded capsule on active sidebar row (compatible with 2.33.0+) */
+/* Starlight rounded translucent purple capsule on active sidebar row */
 body[data-agy-theme].dark .agy-sidebar-row[data-selected="true"],
 body[data-agy-theme][data-newux-theme="onyx"].dark .agy-sidebar-row[data-selected="true"],
 :is(html[data-ag-theme-mode="dark"] body, body.dark) :is([data-testid="conversation-row-sidebar"][data-selected="true"], .agy-sidebar-row[data-selected="true"]) {
-  background-color: #353535 !important;
-  --row-bg: #353535 !important;
+  background-color: rgba(167, 139, 250, 0.18) !important;
+  --row-bg: rgba(167, 139, 250, 0.18) !important;
   border-radius: 10px !important;
-  box-shadow: none !important;
+  box-shadow: inset 0 0 0 1px rgba(244, 114, 182, 0.24) !important;
+}
+
+:is(html[data-ag-theme-mode="dark"] body, body.dark) :is([data-testid="conversation-row-sidebar"], .agy-sidebar-row):not([data-selected="true"]):hover {
+  background-color: rgba(167, 139, 250, 0.10) !important;
 }
 
 /* Composer dark mode outer tray & inner floating card overrides */
 :is(html[data-ag-theme-mode="dark"] body, body.dark) :is(#antigravity\.agentSidePanelInputBox, [id="antigravity.agentSidePanelInputBox"], .surface-composer, .surface-composer.bg-card-border) {
-  --nux-composer-frame-radius: 21px;
+  --nux-composer-frame-radius: 22px;
   --nux-composer-radius: 20px;
   padding: 1px !important;
-  background-color: #262626 !important;
-  border: 0 !important;
-  border-radius: 21px !important;
+  background-color: var(--ag-composer-tray-bg) !important;
+  border: 1px solid var(--ag-composer-tray-border) !important;
+  border-radius: 22px !important;
   box-shadow: none !important;
 }
 
@@ -104,21 +129,49 @@ body[data-agy-theme][data-newux-theme="onyx"].dark .surface-composer > .surface-
   .surface-composer > .surface-composer-card,
   .surface-composer-card.bg-card,
   [id="antigravity.agentSidePanelInputBox"] .surface-composer-card,
-  [id="antigravity.agentSidePanelInputBox"] > div.bg-card
+  [id="antigravity.agentSidePanelInputBox"] > div.bg-card:not([role="listbox"])
 ) {
-  background-color: #363636 !important;
-  border: 1px solid rgba(255, 255, 255, 0.07) !important;
+  background-color: var(--ag-composer-card-bg) !important;
+  border: 1px solid var(--ag-composer-card-border) !important;
   border-radius: 20px !important;
   box-shadow: var(--ag-composer-card-shadow) !important;
 }
 
 :is(html[data-ag-theme-mode="dark"] body, body.dark) :is(
-  .surface-composer:focus-within > .surface-composer-card,
-  .surface-composer-card:focus-within,
-  [id="antigravity.agentSidePanelInputBox"]:focus-within .surface-composer-card
+  [id="antigravity.agentSidePanelInputBox"][data-ag-composer-active="1"] .surface-composer-card,
+  [id="antigravity.agentSidePanelInputBox"][data-ag-composer-active="1"] > div.bg-card:not([role="listbox"]),
+  .surface-composer:not(#antigravity\.agentSidePanelInputBox):focus-within > .surface-composer-card
 ) {
-  border-color: rgba(255, 255, 255, 0.12) !important;
+  border-color: var(--ag-composer-card-focus-border) !important;
   box-shadow: var(--ag-composer-card-focus-shadow) !important;
+}
+
+/* Dark chat bubbles & markdown code readability over starry backdrop */
+:is(html[data-ag-theme-mode="dark"] body, body.dark) .agy-user-bubble {
+  background-color: rgba(34, 29, 64, 0.78) !important;
+  border: 1px solid rgba(196, 181, 253, 0.16) !important;
+}
+
+:is(html[data-ag-theme-mode="dark"] body, body.dark) [data-testid="user-message-content"] {
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+:is(html[data-ag-theme-mode="dark"] body, body.dark) :is([data-markdown-root], [data-testid="user-message-content"], .select-text, .prose, .markdown, article) pre:has(> [class*="rounded"]):not(.monaco-editor pre):not(.xterm pre) {
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+:is(html[data-ag-theme-mode="dark"] body, body.dark) :is(
+  :is([data-markdown-root], [data-testid="user-message-content"], .select-text, .prose, .markdown, article) :is(pre:not(:has(> [class*="rounded"])), pre > div[class*="rounded"]):not(.monaco-editor *):not(.xterm *),
+  pre[class*="language-"]:not(:has(> [class*="rounded"])):not(.monaco-editor *):not(.xterm *)
+) {
+  background-color: rgba(16, 14, 32, 0.86) !important;
+  border: 1px solid rgba(196, 181, 253, 0.16) !important;
+  border-radius: 12px !important;
+  overflow: hidden;
 }
 
 :is(html[data-ag-theme-mode="dark"] body, body.dark) #antigravity\.agentSidePanelInputBox button[data-testid="input-cancel-button"] {

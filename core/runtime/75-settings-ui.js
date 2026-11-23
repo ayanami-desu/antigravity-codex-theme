@@ -367,6 +367,11 @@
 
       const uiState = {
         config: {
+          showMascot: bootUserCfg.showMascot !== false,
+          mascotPosition: bootUserCfg.mascotPosition === 'sidebar' ? 'sidebar' : 'content-left',
+          mascotVariant: bootUserCfg.mascotVariant || 'auto',
+          mascotSize: bootUserCfg.mascotSize || 'md',
+          bgDim: bootUserCfg.bgDim || 'medium',
           telemetryLayout: bootUserCfg.telemetryLayout || boot.telemetryLayout || 'compact',
           telemetryCacheMode: bootUserCfg.telemetryCacheMode || boot.telemetryCacheMode || 'session',
           quotaStyle: bootUserCfg.quotaStyle || boot.quotaStyle || 'segments',
@@ -402,18 +407,18 @@
       function getStrings() {
         if (isZhUi()) {
           return {
-            navTitle: 'Codex 主题',
-            pageTitle: 'Codex 主题',
+            navTitle: '星樱主题',
+            pageTitle: '星樱主题 · Starlight',
             manualRefreshLabel: '手动刷新主题与配置',
             savedBadge: '已同步',
             refreshedBadge: '已刷新',
             githubLabel: 'GitHub',
             feedbackLabel: '反馈',
-            subtitlePrefix: '管理主题配色、中文界面、会话统计与可选增强模块，修改实时同步至 ',
+            subtitlePrefix: '管理二次元星夜主题、看板娘、中文界面与会话统计，修改实时同步至 ',
             subtitleSuffix: '。',
             secCore: '核心模块',
-            modTheme: 'Codex 昼夜主题',
-            modThemeDesc: '浅色纯白与中性炭灰深色配色，随 IDE 外观自动切换',
+            modTheme: '星辉紫梦昼夜主题',
+            modThemeDesc: '漫射极光画布与紫粉毛玻璃层次，内置浏览器自动保持原样',
             modI18n: '中文界面汉化',
             modI18nDesc: '内置 2,000+ 界面与原生右键菜单词条，原地更新不影响交互，关闭即恢复英文',
             modMetrics: '实时会话状态与用量统计',
@@ -438,6 +443,25 @@
             qStyleGauge: '仪表',
             qStyleDots: '点阵',
             qStyleCompact: '紧凑',
+            secVisual: '二次元视觉与看板娘',
+            showMascotLbl: '星辉猫耳看板娘',
+            showMascotDesc: '默认立于对话内容框左侧宽敞舞台并随窗口自动缩放避让；内置浏览器自动隐藏',
+            mascotPosLbl: '看板娘位置',
+            mascotPosDesc: '推荐置于对话内容左侧大舞台，也可收纳至左侧边栏底部',
+            mascotPosContentLeft: '内容左侧',
+            mascotPosSidebar: '左侧边栏',
+            mascotVarLbl: '看板娘姿态',
+            mascotVarDesc: '状态随动（空闲/输入等你/执行中/卡顿重试与出错）或固定单张立绘',
+            mascotVarAuto: '随动',
+            mascotVar1: '空闲',
+            mascotVar2: '执行',
+            mascotVar3: '输入',
+            mascotVar4: '出错',
+            mascotSizeLbl: '看板娘尺寸',
+            mascotSizeDesc: '调节立绘显示比例（侧边栏模式随高度自动缩放避让文字）',
+            mascotSm: '小',
+            mascotMd: '中',
+            mascotLg: '大',
             secOptional: '可选增强',
             secOptionalHint: '默认关闭，按需开启',
             modSuggest: '输入框下一句预测',
@@ -503,6 +527,8 @@
             updPillUpdating: '更新中…',
             updPillApplied: '更新完成',
             updPillErr: '检查失败',
+            updPillUpdatedLocal: '本地定制版',
+            updDescLocalFork: '当前为本地定制星樱主题分支，未绑定远端更新源（避免覆盖个人魔改）',
             updBtnCheck: '检查更新',
             updBtnChecking: '检查中…',
             updBtnApply: '立即更新',
@@ -511,18 +537,18 @@
           };
         }
         return {
-          navTitle: 'Codex Theme',
-          pageTitle: 'Codex Theme',
+          navTitle: 'Starlight Theme',
+          pageTitle: 'Starlight Sakura Theme',
           manualRefreshLabel: 'Reload theme & config',
           savedBadge: 'Synced',
           refreshedBadge: 'Refreshed',
           githubLabel: 'GitHub',
           feedbackLabel: 'Feedback',
-          subtitlePrefix: 'Manage theme colors, localization, live telemetry, and opt-in modules. Changes sync directly to ',
+          subtitlePrefix: 'Manage Starlight anime visuals, mascot, localization, and telemetry. Synced to ',
           subtitleSuffix: '.',
           secCore: 'Core Modules',
-          modTheme: 'Codex Light & Dark Theme',
-          modThemeDesc: 'Pure white light and charcoal dark palettes that follow IDE appearance automatically',
+          modTheme: 'Starlight Sakura Theme',
+          modThemeDesc: 'Ambient aurora canvas & frosted violet glass; leaves browser views untouched',
           modI18n: 'Chinese UI Localization',
           modI18nDesc: '2,000+ built-in UI & native context menu entries applied in place; disable to restore English immediately',
           modMetrics: 'Live Session Status & Telemetry',
@@ -547,6 +573,25 @@
           qStyleGauge: 'Gauge',
           qStyleDots: 'Dots',
           qStyleCompact: 'Compact',
+          secVisual: 'Anime Visuals & Mascot',
+          showMascotLbl: 'Catgirl Mascot Companion',
+          showMascotDesc: 'Staged beside the left of the chat column with auto-scaling; hides on browser views',
+          mascotPosLbl: 'Mascot Position',
+          mascotPosDesc: 'Stage to the left of chat content (recommended) or inside the left sidebar',
+          mascotPosContentLeft: 'Content Left',
+          mascotPosSidebar: 'Sidebar',
+          mascotVarLbl: 'Mascot Pose',
+          mascotVarDesc: 'Auto-switch by state (Idle/Typing/Running/Slow & Error) or pin a pose',
+          mascotVarAuto: 'Auto',
+          mascotVar1: 'Idle',
+          mascotVar2: 'Run',
+          mascotVar3: 'Input',
+          mascotVar4: 'Err',
+          mascotSizeLbl: 'Mascot Size',
+          mascotSizeDesc: 'Adjust companion display scale (auto-scales in compact sidebar)',
+          mascotSm: 'Small',
+          mascotMd: 'Medium',
+          mascotLg: 'Large',
           secOptional: 'Optional Enhancements',
           secOptionalHint: 'Off by default, opt-in',
           modSuggest: 'Prompt Suggestions',
@@ -612,6 +657,8 @@
           updPillUpdating: 'Updating…',
           updPillApplied: 'Updated',
           updPillErr: 'Failed',
+          updPillUpdatedLocal: 'Local Build',
+          updDescLocalFork: 'Custom local Starlight theme build (remote auto-overwrite disabled)',
           updBtnCheck: 'Check for Updates',
           updBtnChecking: 'Checking…',
           updBtnApply: 'Update Now',
@@ -690,6 +737,11 @@
         if (!res || !res.ok) return;
         if (res.config) {
           uiState.config = {
+            showMascot: typeof res.config.showMascot === 'boolean' ? res.config.showMascot : uiState.config.showMascot,
+            mascotPosition: res.config.mascotPosition === 'sidebar' ? 'sidebar' : 'content-left',
+            mascotVariant: res.config.mascotVariant || uiState.config.mascotVariant,
+            mascotSize: res.config.mascotSize || uiState.config.mascotSize,
+            bgDim: res.config.bgDim || uiState.config.bgDim,
             telemetryLayout: res.config.telemetryLayout || uiState.config.telemetryLayout,
             telemetryCacheMode: res.config.telemetryCacheMode || uiState.config.telemetryCacheMode,
             quotaStyle: res.config.quotaStyle || uiState.config.quotaStyle,
@@ -885,6 +937,11 @@
             uiState.agyStatus = Object.assign({}, uiState.agyStatus, { running: true, warmed: false });
           }
         }
+        if (typeof patch.showMascot === 'boolean') uiState.config.showMascot = patch.showMascot;
+        if (patch.mascotPosition) uiState.config.mascotPosition = patch.mascotPosition === 'sidebar' ? 'sidebar' : 'content-left';
+        if (patch.mascotVariant) uiState.config.mascotVariant = patch.mascotVariant;
+        if (patch.mascotSize) uiState.config.mascotSize = patch.mascotSize;
+        if (patch.bgDim) uiState.config.bgDim = patch.bgDim;
         if (patch.telemetryLayout) uiState.config.telemetryLayout = patch.telemetryLayout;
         if (patch.telemetryCacheMode) uiState.config.telemetryCacheMode = patch.telemetryCacheMode;
         if (patch.quotaStyle) {
@@ -2084,6 +2141,115 @@
           '</div>' +
           '</div>' +
           '</div>' +
+          // Group 1.5: Anime Visuals & Mascot
+          '<div>' +
+          '<div class="ag-s-section-head"><span class="ag-s-section-title">' +
+          escHtml(s.secVisual) +
+          '</span></div>' +
+          '<div class="ag-s-card">' +
+          '<div class="ag-s-row"><div class="ag-s-row-main">' +
+          '<div class="ag-s-row-info"><label class="ag-s-row-label" for="ag-s-sw-mascot">' +
+          escHtml(s.showMascotLbl) +
+          '</label><div class="ag-s-row-desc">' +
+          escHtml(s.showMascotDesc) +
+          '</div></div>' +
+          '<input id="ag-s-sw-mascot" type="checkbox" switch role="switch" class="ag-s-switch" data-bind-cfg="showMascot" aria-label="' +
+          escHtml(s.showMascotLbl) +
+          '" ' +
+          (cfg.showMascot !== false ? 'checked' : '') +
+          ' />' +
+          '</div></div>' +
+          '<div class="ag-s-row"' +
+          (cfg.showMascot !== false ? '' : ' hidden') +
+          '><div class="ag-s-row-main">' +
+          '<div class="ag-s-row-info"><div class="ag-s-row-label">' +
+          escHtml(s.mascotPosLbl) +
+          '</div><div class="ag-s-row-desc">' +
+          escHtml(s.mascotPosDesc) +
+          '</div></div>' +
+          '<div class="ag-s-seg" role="group" aria-label="' +
+          escHtml(s.mascotPosLbl) +
+          '">' +
+          '<button type="button" class="ag-s-seg-btn" data-seg="mascotPosition" data-val="content-left" aria-pressed="' +
+          (cfg.mascotPosition !== 'sidebar' ? 'true' : 'false') +
+          '">' +
+          escHtml(s.mascotPosContentLeft) +
+          '</button>' +
+          '<button type="button" class="ag-s-seg-btn" data-seg="mascotPosition" data-val="sidebar" aria-pressed="' +
+          (cfg.mascotPosition === 'sidebar' ? 'true' : 'false') +
+          '">' +
+          escHtml(s.mascotPosSidebar) +
+          '</button>' +
+          '</div>' +
+          '</div></div>' +
+          '<div class="ag-s-row"' +
+          (cfg.showMascot !== false ? '' : ' hidden') +
+          '><div class="ag-s-row-main">' +
+          '<div class="ag-s-row-info"><div class="ag-s-row-label">' +
+          escHtml(s.mascotVarLbl) +
+          '</div><div class="ag-s-row-desc">' +
+          escHtml(s.mascotVarDesc) +
+          '</div></div>' +
+          '<div class="ag-s-seg" role="group" aria-label="' +
+          escHtml(s.mascotVarLbl) +
+          '">' +
+          '<button type="button" class="ag-s-seg-btn" data-seg="mascotVariant" data-val="auto" aria-pressed="' +
+          (!['1', '2', '3', '4'].includes(cfg.mascotVariant) ? 'true' : 'false') +
+          '">' +
+          escHtml(s.mascotVarAuto) +
+          '</button>' +
+          '<button type="button" class="ag-s-seg-btn" data-seg="mascotVariant" data-val="1" aria-pressed="' +
+          (cfg.mascotVariant === '1' ? 'true' : 'false') +
+          '">' +
+          escHtml(s.mascotVar1) +
+          '</button>' +
+          '<button type="button" class="ag-s-seg-btn" data-seg="mascotVariant" data-val="2" aria-pressed="' +
+          (cfg.mascotVariant === '2' ? 'true' : 'false') +
+          '">' +
+          escHtml(s.mascotVar2) +
+          '</button>' +
+          '<button type="button" class="ag-s-seg-btn" data-seg="mascotVariant" data-val="3" aria-pressed="' +
+          (cfg.mascotVariant === '3' ? 'true' : 'false') +
+          '">' +
+          escHtml(s.mascotVar3) +
+          '</button>' +
+          '<button type="button" class="ag-s-seg-btn" data-seg="mascotVariant" data-val="4" aria-pressed="' +
+          (cfg.mascotVariant === '4' ? 'true' : 'false') +
+          '">' +
+          escHtml(s.mascotVar4) +
+          '</button>' +
+          '</div>' +
+          '</div></div>' +
+          '<div class="ag-s-row"' +
+          (cfg.showMascot !== false ? '' : ' hidden') +
+          '><div class="ag-s-row-main">' +
+          '<div class="ag-s-row-info"><div class="ag-s-row-label">' +
+          escHtml(s.mascotSizeLbl) +
+          '</div><div class="ag-s-row-desc">' +
+          escHtml(s.mascotSizeDesc) +
+          '</div></div>' +
+          '<div class="ag-s-seg" role="group" aria-label="' +
+          escHtml(s.mascotSizeLbl) +
+          '">' +
+          '<button type="button" class="ag-s-seg-btn" data-seg="mascotSize" data-val="sm" aria-pressed="' +
+          (cfg.mascotSize === 'sm' ? 'true' : 'false') +
+          '">' +
+          escHtml(s.mascotSm) +
+          '</button>' +
+          '<button type="button" class="ag-s-seg-btn" data-seg="mascotSize" data-val="md" aria-pressed="' +
+          (cfg.mascotSize !== 'sm' && cfg.mascotSize !== 'lg' ? 'true' : 'false') +
+          '">' +
+          escHtml(s.mascotMd) +
+          '</button>' +
+          '<button type="button" class="ag-s-seg-btn" data-seg="mascotSize" data-val="lg" aria-pressed="' +
+          (cfg.mascotSize === 'lg' ? 'true' : 'false') +
+          '">' +
+          escHtml(s.mascotLg) +
+          '</button>' +
+          '</div>' +
+          '</div></div>' +
+          '</div>' +
+          '</div>' +
           // Group 2: Optional Enhancements
           '<div>' +
           '<div class="ag-s-section-head">' +
@@ -2327,6 +2493,9 @@
             } else if (u.status === 'applied') {
               pillHtml = '<span class="ag-s-upd-pill" data-tone="ok">' + escHtml(s.updPillApplied) + '</span>';
               descText = s.updDescApplied;
+            } else if (u.status === 'local_fork') {
+              pillHtml = '<span class="ag-s-upd-pill" data-tone="ok">' + escHtml(s.updPillUpdatedLocal) + '</span>';
+              descText = s.updDescLocalFork;
             } else if (u.status === 'up_to_date') {
               pillHtml = '<span class="ag-s-upd-pill" data-tone="ok">' + escHtml(s.updPillLatest) + '</span>';
               descText = s.updDescUpToDate;
@@ -2498,6 +2667,12 @@
         );
 
         pane.addEventListener('change', (ev) => {
+          const cfgSw = ev.target && ev.target.closest ? ev.target.closest('input.ag-s-switch[data-bind-cfg]') : null;
+          if (cfgSw) {
+            const field = cfgSw.getAttribute('data-bind-cfg');
+            if (field) commitPatch({ [field]: Boolean(cfgSw.checked) });
+            return;
+          }
           const sw = ev.target && ev.target.closest ? ev.target.closest('input.ag-s-switch[data-bind-mod]') : null;
           if (!sw) return;
           const mod = sw.getAttribute('data-bind-mod');
@@ -2736,9 +2911,8 @@
           btn.setAttribute('data-testid', 'settings-nav-item-CodexTheme');
           btn.innerHTML =
             '<span class="ag-s-nav-left">' +
-            '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.85;flex-shrink:0" aria-hidden="true">' +
-            '<circle cx="8" cy="8" r="5.5"></circle>' +
-            '<path d="M8 2.5a5.5 5.5 0 0 0 0 11Z" fill="currentColor" stroke="none"></path>' +
+            '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.9;flex-shrink:0" aria-hidden="true">' +
+            '<path d="M8 1.5L9.75 6.25L14.5 8L9.75 9.75L8 14.5L6.25 9.75L1.5 8L6.25 6.25L8 1.5Z"></path>' +
             '</svg>' +
             '<span class="ag-s-nav-label"></span>' +
             '</span>' +

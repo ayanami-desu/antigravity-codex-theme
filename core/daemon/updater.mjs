@@ -11,10 +11,11 @@ import { spawn } from 'node:child_process';
 import { ROOT_DIR } from './paths.mjs';
 
 export const UPDATE_REPO = Object.freeze({
-  owner: 'nkjDSLcvanv',
-  name: 'antigravity-codex-theme',
+  configured: false,
+  owner: 'local',
+  name: 'antigravity-starlight-theme',
   branch: 'main',
-  releaseApiUrl: 'https://api.github.com/repos/nkjDSLcvanv/antigravity-codex-theme/releases/latest',
+  releaseApiUrl: '',
   repoUrl: 'https://github.com/nkjDSLcvanv/antigravity-codex-theme'
 });
 
@@ -132,6 +133,22 @@ export async function checkForUpdates({
   const installed = readInstalledManifest(targetDir);
   const currentVersion = installed.version;
   const checkedAt = Date.now();
+
+  if (!UPDATE_REPO.configured && fetchJson === defaultFetchJson) {
+    return {
+      ok: true,
+      status: 'local_fork',
+      currentVersion,
+      latestVersion: currentVersion,
+      updateAvailable: false,
+      canSyncMain: false,
+      changedCount: 0,
+      targetRef: UPDATE_REPO.branch,
+      releaseUrl: UPDATE_REPO.repoUrl,
+      checkedAt,
+      error: ''
+    };
+  }
 
   let remoteManifest = null;
   let releaseMeta = null;

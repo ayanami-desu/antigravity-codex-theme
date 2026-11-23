@@ -12,7 +12,7 @@
   if (window.top !== window && !IS_SWARM_PLUGIN_FRAME) return;
   if (!boot || typeof boot !== 'object') return;
 
-  const PATCH_VERSION = boot.version || '1.4.4';
+  let PATCH_VERSION = boot.version || '1.4.4';
   const CORE_HASH = String(boot.coreHash || '');
   const DAEMON_BOOT_ID = String(boot.daemonBootId || '');
   const BUNDLE_BOOT_SEQ = (window.__ag_bundle_boot_seq = (Number(window.__ag_bundle_boot_seq) || 0) + 1);
@@ -38,7 +38,23 @@
     boot.modules || {}
   );
 
-  const DEFAULT_PRESET = boot.preset || 'codex-pure-white';
+  const INIT_VISUAL =
+    typeof window !== 'undefined' && window.__ag_override_visual && typeof window.__ag_override_visual === 'object'
+      ? Object.assign({}, boot, window.__ag_override_visual)
+      : boot;
+  const DEFAULT_PRESET = INIT_VISUAL.preset || 'starlight-dark';
+  let SHOW_MASCOT = INIT_VISUAL.showMascot !== false;
+  let MASCOT_POSITION = INIT_VISUAL.mascotPosition === 'sidebar' ? 'sidebar' : 'content-left';
+  let MASCOT_VARIANT =
+    INIT_VISUAL.mascotVariant === '1' ||
+    INIT_VISUAL.mascotVariant === '2' ||
+    INIT_VISUAL.mascotVariant === '3' ||
+    INIT_VISUAL.mascotVariant === '4'
+      ? INIT_VISUAL.mascotVariant
+      : 'auto';
+  let MASCOT_SIZE = INIT_VISUAL.mascotSize === 'sm' || INIT_VISUAL.mascotSize === 'lg' ? INIT_VISUAL.mascotSize : 'md';
+  let BG_DIM = INIT_VISUAL.bgDim === 'low' || INIT_VISUAL.bgDim === 'high' ? INIT_VISUAL.bgDim : 'medium';
+  const THEME_ASSETS = boot.themeAssets && typeof boot.themeAssets === 'object' ? boot.themeAssets : {};
   const DEFAULT_EXCLUDE_I18N =
     'code, pre, kbd, samp, textarea, input, style, script, noscript, [contenteditable="true"], [data-markdown-root], [data-testid="user-message-content"], .agy-user-bubble, .monaco-editor, .monaco-diff-editor, .xterm, [class*="onyx-key"], .prose, .markdown, [class*="chat-message"], [class*="group/file-title"], [data-testid="conversation-row-sidebar"] a[href^="/c/"], [data-testid="conversation-row-sidebar"] span.truncate, [data-testid="conversation-row-history"] a[href^="/c/"], [data-testid="conversation-row-history"] span.truncate, [data-testid="conversation-navigator-turn"], #ag-live-metrics-pill, .ag-live-metrics-pill, #ag-live-metrics-tooltip, #ag-turn-metrics-tooltip, .ag-turn-metrics, #ag-quota, .ag-quota, #ag-quota-popover, .ag-prompt-ghost-overlay, .ag-prompt-ghost-text, .ag-prompt-ghost-kbd, #ag-settings-nav-wrap, #ag-settings-pane, #ag-settings-model-menu, #ag-settings-effort-menu, #ag-settings-font-menu';
 
@@ -317,6 +333,9 @@
   if (!ENABLED) {
     for (const id of [
       'ag-codex-theme',
+      'ag-anime-assets',
+      'ag-anime-bg-layer',
+      'ag-anime-mascot-layer',
       'ag-user-theme-vars',
       'ag-user-fonts',
       'ag-user-custom-style',
@@ -372,7 +391,19 @@
     window.__ag_on_route_change = null;
     window.__ag_body_ready = false;
     applyThemeVars({});
-    for (const attr of ['data-ag-preset', 'data-ag-theme-mode', 'data-ag-page-type', 'data-ag-os', 'data-ag-custom-font-size']) {
+    for (const attr of [
+      'data-ag-preset',
+      'data-ag-theme-mode',
+      'data-ag-page-type',
+      'data-ag-os',
+      'data-ag-custom-font-size',
+      'data-ag-agent-state',
+      'data-ag-composer-active',
+      'data-ag-mascot-pos',
+      'data-ag-mascot-variant',
+      'data-ag-mascot-size',
+      'data-ag-bg-dim'
+    ]) {
       document.documentElement.removeAttribute(attr);
     }
     restoreAllTranslations(document.body);
@@ -400,9 +431,52 @@
   }
   if (MODULES.theme !== false) {
     applyThemeVars(THEME_VARS);
+    const mascotAssetUrl = typeof THEME_ASSETS.mascotUrl === 'string' ? THEME_ASSETS.mascotUrl.trim() : '';
+    const mascotUrls = THEME_ASSETS.mascotUrls && typeof THEME_ASSETS.mascotUrls === 'object' ? THEME_ASSETS.mascotUrls : {};
+    const m1 = typeof mascotUrls['1'] === 'string' && mascotUrls['1'].trim() ? mascotUrls['1'].trim() : mascotAssetUrl;
+    const m2 = typeof mascotUrls['2'] === 'string' && mascotUrls['2'].trim() ? mascotUrls['2'].trim() : m1;
+    const m3 = typeof mascotUrls['3'] === 'string' && mascotUrls['3'].trim() ? mascotUrls['3'].trim() : m1;
+    const m4 = typeof mascotUrls['4'] === 'string' && mascotUrls['4'].trim() ? mascotUrls['4'].trim() : m1;
+    const cIdle = typeof THEME_ASSETS.composerIdleUrl === 'string' ? THEME_ASSETS.composerIdleUrl.trim() : '';
+    const cTyping = typeof THEME_ASSETS.composerTypingUrl === 'string' ? THEME_ASSETS.composerTypingUrl.trim() : '';
+    let assetStyle = document.getElementById('ag-anime-assets');
+    if (mascotAssetUrl || m1 || cIdle) {
+      if (!assetStyle) {
+        assetStyle = document.createElement('style');
+        assetStyle.id = 'ag-anime-assets';
+        if (headTarget) headTarget.appendChild(assetStyle);
+      }
+      const assetCss =
+        ':root {' +
+        (mascotAssetUrl || m1 ? ` --ag-anime-mascot-image: url("${mascotAssetUrl || m1}");` : ' --ag-anime-mascot-image: none;') +
+        (m1 ? ` --ag-anime-mascot-1: url("${m1}");` : ' --ag-anime-mascot-1: none;') +
+        (m2 ? ` --ag-anime-mascot-2: url("${m2}");` : ' --ag-anime-mascot-2: none;') +
+        (m3 ? ` --ag-anime-mascot-3: url("${m3}");` : ' --ag-anime-mascot-3: none;') +
+        (m4 ? ` --ag-anime-mascot-4: url("${m4}");` : ' --ag-anime-mascot-4: none;') +
+        (cIdle ? ` --ag-anime-composer-idle: url("${cIdle}");` : ' --ag-anime-composer-idle: none;') +
+        (cTyping ? ` --ag-anime-composer-typing: url("${cTyping}");` : cIdle ? ` --ag-anime-composer-typing: url("${cIdle}");` : ' --ag-anime-composer-typing: none;') +
+        ' }';
+      if (assetStyle.textContent !== assetCss) {
+        assetStyle.textContent = assetCss;
+      }
+    } else if (assetStyle) {
+      assetStyle.remove();
+    }
   } else {
     applyThemeVars({});
-    for (const attr of ['data-ag-preset', 'data-ag-theme-mode', 'data-ag-custom-font-size']) {
+    const assetStyle = document.getElementById('ag-anime-assets');
+    if (assetStyle) assetStyle.remove();
+    for (const attr of [
+      'data-ag-preset',
+      'data-ag-theme-mode',
+      'data-ag-custom-font-size',
+      'data-ag-mascot-pos',
+      'data-ag-mascot-variant',
+      'data-ag-mascot-size',
+      'data-ag-bg-dim',
+      'data-ag-agent-state',
+      'data-ag-composer-active'
+    ]) {
       document.documentElement.removeAttribute(attr);
     }
   }
@@ -431,6 +505,7 @@
     if (!needsMove) {
       for (let sib = base.nextElementSibling; sib; sib = sib.nextElementSibling) {
         if (
+          sib.id !== 'ag-anime-assets' &&
           sib.id !== 'ag-user-theme-vars' &&
           sib.id !== 'ag-user-fonts' &&
           sib.id !== 'ag-user-custom-style' &&
@@ -442,7 +517,7 @@
       }
     }
     if (needsMove) {
-      for (const id of ['ag-codex-theme', 'ag-user-theme-vars', 'ag-user-fonts', 'ag-user-custom-style']) {
+      for (const id of ['ag-codex-theme', 'ag-anime-assets', 'ag-user-theme-vars', 'ag-user-fonts', 'ag-user-custom-style']) {
         const el = document.getElementById(id);
         if (el) h.appendChild(el);
       }

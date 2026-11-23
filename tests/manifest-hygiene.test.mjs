@@ -44,7 +44,7 @@ test('core/i18n.json is valid JSON with substantial localization coverage', () =
   }
 });
 
-test('Assembled runtime JS and CSS parts pass syntax validation and define Codex presets', () => {
+test('Assembled runtime JS and CSS parts pass syntax validation and define Starlight presets', () => {
   const stylesDir = path.join(ROOT_DIR, 'core', 'styles');
   const runtimeDir = path.join(ROOT_DIR, 'core', 'runtime');
   const css = fs
@@ -60,9 +60,10 @@ test('Assembled runtime JS and CSS parts pass syntax validation and define Codex
     .map((f) => fs.readFileSync(path.join(runtimeDir, f), 'utf8'))
     .join('\n');
 
-  assert.ok(css.includes('#2B7FFF'));
-  assert.ok(css.includes('#181818'));
-  assert.ok(css.includes('#363636'));
+  assert.ok(css.includes('#A855F7'));
+  assert.ok(css.includes('#0F0E1B'));
+  assert.ok(css.includes('#ag-anime-bg-layer'));
+  assert.ok(css.includes('#ag-anime-mascot-layer'));
   assert.ok(css.includes('.ag-dot-slow'));
   assert.ok(
     /\[data-testid="cascade-system-message-toolbar"\]\s*>\s*div:last-child[\s\S]*?justify-content:\s*flex-end/i.test(css),
@@ -100,6 +101,8 @@ test('Assembled runtime JS and CSS parts pass syntax validation and define Codex
   }
   assert.ok(js.includes('codex-pure-white'));
   assert.ok(js.includes('codex-dark'));
+  assert.ok(js.includes('starlight-light'));
+  assert.ok(js.includes('starlight-dark'));
   assert.ok(js.includes('cascade-system-message-toolbar'));
   assert.ok(js.includes('#ag-codex-theme') || js.includes("'ag-codex-theme'"));
 

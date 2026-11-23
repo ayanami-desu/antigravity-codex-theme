@@ -63,6 +63,7 @@ html[data-ag-preset]:not([data-ag-theme-mode="dark"]):not(:has(> body.dark)) :is
   --ag-s-err: #DC2626;
   --ag-s-seg-bg: #F3F4F6;
   --ag-s-seg-active: #FFFFFF;
+  --ag-s-seg-active-fg: #0D0D0D;
   --ag-s-seg-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
   --ag-s-chip-bg: #F3F4F6;
   --ag-s-badge-bg: #F3F4F6;
@@ -89,16 +90,82 @@ html[data-ag-preset]:not([data-ag-theme-mode="dark"]):not(:has(> body.dark)) :is
   --ag-s-err: #F87171;
   --ag-s-seg-bg: #2A2A2A;
   --ag-s-seg-active: #3A3A3A;
+  --ag-s-seg-active-fg: #F5F5F5;
   --ag-s-seg-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
   --ag-s-chip-bg: #2E2E2E;
   --ag-s-badge-bg: #303030;
   --ag-s-dropdown-shadow: 0 20px 44px -6px rgba(0, 0, 0, 0.72), 0 4px 12px rgba(0, 0, 0, 0.42);
 }
 
+/* Starlight Sakura tokens — active only when theme module sets data-ag-preset */
+html[data-ag-preset^="starlight"] :is([data-testid="settings-sidebar"], #ag-settings-nav-wrap, #ag-settings-pane, #ag-settings-model-menu, #ag-settings-effort-menu) {
+  --ag-s-bg: #FAF7FF;
+  --ag-s-sidebar: #F2ECFF;
+  --ag-s-selected: rgba(139, 92, 246, 0.14);
+  --ag-s-hover: rgba(139, 92, 246, 0.08);
+  --ag-s-card: rgba(255, 255, 255, 0.86);
+  --ag-s-surface: rgba(238, 232, 255, 0.72);
+  --ag-s-border: rgba(139, 92, 246, 0.16);
+  --ag-s-hairline: rgba(139, 92, 246, 0.10);
+  --ag-s-fg: #1B1530;
+  --ag-s-fg-2: #433763;
+  --ag-s-fg-3: #6E6291;
+  --ag-s-primary: #7C3AED;
+  --ag-s-primary-grad: linear-gradient(135deg, #7C3AED 0%, #EC4899 100%);
+  --ag-s-focus: #8B5CF6;
+  --ag-s-switch-off: rgba(139, 92, 246, 0.22);
+  --ag-s-ok: #10B981;
+  --ag-s-warn: #D97706;
+  --ag-s-err: #DC2626;
+  --ag-s-seg-bg: rgba(235, 226, 255, 0.68);
+  --ag-s-seg-active: #FFFFFF;
+  --ag-s-seg-active-fg: #6D28D9;
+  --ag-s-seg-shadow: 0 1px 4px rgba(109, 40, 217, 0.14), 0 0 0 1px rgba(139, 92, 246, 0.12);
+  --ag-s-chip-bg: rgba(139, 92, 246, 0.10);
+  --ag-s-badge-bg: rgba(236, 72, 153, 0.12);
+  --ag-s-dropdown-shadow: 0 12px 32px -4px rgba(109, 40, 217, 0.16), 0 2px 8px -2px rgba(109, 40, 217, 0.08);
+}
+
+:is(html[data-ag-preset^="starlight"][data-ag-theme-mode="dark"] body, html[data-ag-preset^="starlight"].dark body, html[data-ag-preset^="starlight"][data-theme="dark"] body, html[data-ag-preset^="starlight"] body.dark, html[data-ag-preset^="starlight"] body.theme-dark, html[data-ag-preset^="starlight"] body.dark-theme, html[data-ag-preset^="starlight"] body[data-agy-theme].dark) :is([data-testid="settings-sidebar"], #ag-settings-nav-wrap, #ag-settings-pane, #ag-settings-model-menu, #ag-settings-effort-menu) {
+  --ag-s-bg: #141226;
+  --ag-s-sidebar: #181530;
+  --ag-s-selected: rgba(167, 139, 250, 0.22);
+  --ag-s-hover: rgba(196, 181, 253, 0.10);
+  --ag-s-card: #1D1A38;
+  --ag-s-surface: #252146;
+  --ag-s-border: rgba(196, 181, 253, 0.16);
+  --ag-s-hairline: rgba(196, 181, 253, 0.10);
+  --ag-s-fg: #F5F3FF;
+  --ag-s-fg-2: #C8BFEF;
+  --ag-s-fg-3: #9287BC;
+  --ag-s-primary: #A855F7;
+  --ag-s-primary-grad: linear-gradient(135deg, #8B5CF6 0%, #EC4899 100%);
+  --ag-s-focus: #F472B6;
+  --ag-s-switch-off: rgba(139, 92, 246, 0.25);
+  --ag-s-ok: #34D399;
+  --ag-s-warn: #FBBF24;
+  --ag-s-err: #FB7185;
+  --ag-s-seg-bg: rgba(22, 18, 44, 0.90);
+  --ag-s-seg-active: rgba(168, 85, 247, 0.30);
+  --ag-s-seg-active-fg: #FFFFFF;
+  --ag-s-seg-shadow: 0 1px 3px rgba(6, 4, 18, 0.45);
+  --ag-s-chip-bg: rgba(167, 139, 250, 0.14);
+  --ag-s-badge-bg: rgba(244, 114, 182, 0.16);
+  --ag-s-dropdown-shadow: 0 20px 44px -6px rgba(6, 4, 18, 0.76), 0 4px 14px rgba(139, 92, 246, 0.18);
+}
+
 /* Native Settings Modal Integration */
 #ag-settings-nav-divider {
   margin: 8px 16px 6px 16px;
   border-top: 1px solid var(--sidebar-border, var(--border, rgba(0, 0, 0, 0.06)));
+}
+
+html[data-ag-preset^="starlight"] #ag-settings-nav-divider {
+  border-top-color: rgba(139, 92, 246, 0.14);
+}
+
+:is(html[data-ag-preset^="starlight"][data-ag-theme-mode="dark"] body, html[data-ag-preset^="starlight"].dark body, html[data-ag-preset^="starlight"][data-theme="dark"] body, html[data-ag-preset^="starlight"] body.dark, html[data-ag-preset^="starlight"] body.theme-dark, html[data-ag-preset^="starlight"] body.dark-theme, html[data-ag-preset^="starlight"] body[data-agy-theme].dark) #ag-settings-nav-divider {
+  border-top-color: rgba(196, 181, 253, 0.14);
 }
 
 #ag-settings-nav-wrap {
@@ -460,6 +527,7 @@ html[data-ag-preset]:not([data-ag-theme-mode="dark"]):not(:has(> body.dark)) :is
 }
 
 #ag-settings-pane input.ag-s-switch:checked {
+  background: var(--ag-s-primary-grad, var(--ag-s-primary)) !important;
   background-color: var(--ag-s-primary) !important;
 }
 
@@ -614,7 +682,8 @@ html[data-ag-preset]:not([data-ag-theme-mode="dark"]):not(:has(> body.dark)) :is
 
 #ag-settings-pane .ag-s-seg-btn[aria-pressed="true"] {
   background-color: var(--ag-s-seg-active) !important;
-  color: var(--ag-s-fg) !important;
+  color: var(--ag-s-seg-active-fg, var(--ag-s-fg)) !important;
+  font-weight: 600;
   box-shadow: var(--ag-s-seg-shadow);
 }
 

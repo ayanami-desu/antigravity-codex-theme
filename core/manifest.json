@@ -4,13 +4,37 @@
   "minNodeVersion": "22.13.0",
   "fullMetricsNodeVersion": "22.13.0",
   "files": {
+    "assets/starlight-catgirl-1.webp": {
+      "sha256": "97f6e9df1474b77062162129a98cb6aa313c30fb6d0d496833e03f067298ac1c",
+      "bytes": 177646
+    },
+    "assets/starlight-catgirl-2.webp": {
+      "sha256": "172d83db0eec2e38c56110840f6175221d79b8daea9ca30051e27dac75f3d3b4",
+      "bytes": 213698
+    },
+    "assets/starlight-catgirl-3.webp": {
+      "sha256": "59e2d8198e094e066b2adf889a8e700b6936d86ff9544b018d38d1040c39d9d3",
+      "bytes": 152644
+    },
+    "assets/starlight-catgirl-4.webp": {
+      "sha256": "f96067ce30d58abbd24f6894b7cd29d6ad76a414c68def102c54a81282a377c7",
+      "bytes": 247382
+    },
+    "assets/starlight-composer-idle.webp": {
+      "sha256": "77ffe5a2ae72fa5322871b4b0794df436bc914e40c71fcdb9192b2d6c0f19a77",
+      "bytes": 24866
+    },
+    "assets/starlight-composer-typing.webp": {
+      "sha256": "248798cce545d5231be3f352f638671761fe10134410e9e02c73df0c45609d32",
+      "bytes": 210700
+    },
     "daemon.mjs": {
       "sha256": "ae5351637858a4c9e4b0fd64762feb05c43988b335a14d141301b029dc4577d2",
       "bytes": 5269
     },
     "daemon/cdp-bridge.mjs": {
-      "sha256": "0e43d09d3b9d31b9273eb7061a6d81acfca101b43fb6667a1e297ce601179257",
-      "bytes": 58297
+      "sha256": "3b65864dbe58fea654ad477c3ccccec4661a3836da09d9d7a47c697ad877e9bd",
+      "bytes": 59586
     },
     "daemon/cdp-relaunch.mjs": {
       "sha256": "a26fbdc61ea7ec95871e1d7ce1b25b78c3ecfcdbcc677cadbd3d59108897d8e3",
@@ -21,8 +45,8 @@
       "bytes": 2123
     },
     "daemon/paths.mjs": {
-      "sha256": "df55691eb1e51d19ad9197666ca7e0dbdaf5bb642a26a3deee10a9e65c072ae7",
-      "bytes": 26870
+      "sha256": "4d16618da4477ecf625257fe3aa58c22eed6165e3a2ccb985a427d3ddafe2c92",
+      "bytes": 32198
     },
     "daemon/prompt-suggest.mjs": {
       "sha256": "4e82c931b09260814f53fda8a101afc5304122698a1ebf025b2361ca4827ea9b",
@@ -45,8 +69,8 @@
       "bytes": 19694
     },
     "daemon/updater.mjs": {
-      "sha256": "06c60172a216e114a3be991ef4a0e1218e8bc6dcfeecaba73e422dfba584730e",
-      "bytes": 15871
+      "sha256": "d08d527ae63663243d7a877606d5b864ac72ae4f61ccb73fd3506defdf178172",
+      "bytes": 16193
     },
     "i18n.json": {
       "sha256": "f02241a263ab0940e9373db3688bff2945672babb03e2f360343d689d480949a",
@@ -61,8 +85,8 @@
       "bytes": 12591
     },
     "installer/features.mjs": {
-      "sha256": "12d2da5e16e2ed1ebe28d6ecf473cd7551439bffe06296ae31b32b61e6e6e786",
-      "bytes": 6230
+      "sha256": "f1d01e7b2fc57edd389e0eb888b72d381ee90e11c54ac32defd3aa1d7eef87d3",
+      "bytes": 6824
     },
     "installer/manifest.mjs": {
       "sha256": "4001613efc367581f47aa39e7080f39466810a38aff58c373eb654e54da5a651",
@@ -73,16 +97,16 @@
       "bytes": 21703
     },
     "runtime/00-head.js": {
-      "sha256": "da6d43350fc2d3eee78802ffa511f02ce97a2182196f7450d612823ec0e96276",
-      "bytes": 20265
+      "sha256": "4a93459bf9c044668ac76adcf6233acf3c3db305d75096c1a4e38b08757f6646",
+      "bytes": 24030
     },
     "runtime/10-guards.js": {
       "sha256": "f4aedd3e4c615f638fe213c3c9304e51467dd6eceb4ae57b7085db47f6155087",
       "bytes": 2542
     },
     "runtime/20-theme-sync.js": {
-      "sha256": "fd4d48ff82246a690d684a98d9a70f4c1126476d4e7078ed90971ec6a6b98dc5",
-      "bytes": 6481
+      "sha256": "365b1bb3c043fd37faab059a49cc10106ecf35254156227088a8f5fe16fbf4b0",
+      "bytes": 40912
     },
     "runtime/30-antigravity-probe.js": {
       "sha256": "4d35a6b6ed4400adf69ab9cfabdb5ca774c82101eab73b714c6dbbb1e6afad34",
@@ -93,8 +117,8 @@
       "bytes": 13135
     },
     "runtime/50-telemetry-ui.js": {
-      "sha256": "8ea997dc8181b7511a7a2a177d723dadc1bb56045f33c0c90ebb1e137a5d43a9",
-      "bytes": 71248
+      "sha256": "e1a115ae2ba593e21ad93d7b240bb4421c38ec7415e37faa37c78c0bbb07e105",
+      "bytes": 71408
     },
     "runtime/55-quota-ui.js": {
       "sha256": "d473d09be168669434ba6c3185629dd627658e3ed5832eebafd5735355e14f0e",
@@ -109,8 +133,8 @@
       "bytes": 46575
     },
     "runtime/75-settings-ui.js": {
-      "sha256": "b78f45f45639c6177f2bf79c8549070abce06152bc29698960a3f0717a38d4b0",
-      "bytes": 125006
+      "sha256": "e1f7497e912ab4b04468d96951f951e9ce1dcde9ed97b83d153096769f722814",
+      "bytes": 134033
     },
     "runtime/90-tail.js": {
       "sha256": "b5ce1b335be00a42beba9027210a4f05ea1d077768a52d877c91d3937b0cb109",
@@ -121,20 +145,20 @@
       "bytes": 17747
     },
     "styles/00-base.css": {
-      "sha256": "f058db96f03c2c3dfe502484219c7044462c8155e58d362d8dc0fe4245b47a00",
-      "bytes": 15731
+      "sha256": "0409d000a348c02a24a0030ebaeff0be55e46b8280a0ec02cd74924cb1dc7606",
+      "bytes": 30482
     },
     "styles/10-light-codex.css": {
-      "sha256": "9ba3160b6f9958d56e64e321fbf363327adadcd8f61c4d9b5c71482c385c416c",
-      "bytes": 4066
+      "sha256": "aaf7e66e2b124c129c6c6a4d6316791a3743753072f878e7ca351633d5a0f6ec",
+      "bytes": 7533
     },
     "styles/20-dark-codex.css": {
-      "sha256": "e8a38dfdd97a0329d15cbf7580f288cc24868d3a7bb99108e9b791dfc4300693",
-      "bytes": 7466
+      "sha256": "ef0ffffcbd26d0f19fa2cff7fb97a74864ab6e7d0af18091ce412ef9f6b2c78a",
+      "bytes": 10879
     },
     "styles/30-telemetry.css": {
-      "sha256": "7add205cc330ca1e32c2357eb05d2c126b29cb5a83d553c545ed6e2297f0a580",
-      "bytes": 28034
+      "sha256": "68d6612d09478adc1a7f30614b44dd9d44a4556f95bd07a502fae0456fb92230",
+      "bytes": 28089
     },
     "styles/35-quota.css": {
       "sha256": "67214c5ef782a8742f085c78fab58641fdcfef0782df53ebc73880e2b6ff1c08",
@@ -145,8 +169,8 @@
       "bytes": 2817
     },
     "styles/45-settings-ui.css": {
-      "sha256": "2772af8b63b931619bf0a3961c99084fd075761d648fbe479e9bb5edfa48fe5d",
-      "bytes": 28470
+      "sha256": "f3825cf9867df98544e0b19d3a11b9a0661b6fc5c6ad2b82aa415db58868feaa",
+      "bytes": 31978
     }
   }
 }

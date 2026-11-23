@@ -45,15 +45,333 @@ body[data-agy-font="google-sans"] {
   color: var(--foreground) !important;
 }
 
-/* Antigravity 2.31.0+ compatibility: keep embedded browser WebContentsView hole transparent */
-body:not([data-has-browser-hole="true"]),
-body[data-agy-font]:not([data-has-browser-hole="true"]),
-body[data-agy-font="google-sans"]:not([data-has-browser-hole="true"]) {
+/* Antigravity 2.31.0+ ~ 2.34.0+ compatibility: keep embedded browser WebContentsView holes transparent & untouched */
+html:not(:has(> body[data-has-browser-hole="true"])):not(:has(> body[data-has-drawer-browser-hole="true"])):not(:has(> body[data-has-three-layer-browser-hole="true"])) {
+  background-color: var(--ag-root-bg, #0F0E1B) !important;
+}
+
+body:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]):not([data-has-three-layer-browser-hole="true"]),
+body[data-agy-font]:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]):not([data-has-three-layer-browser-hole="true"]),
+body[data-agy-font="google-sans"]:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]):not([data-has-three-layer-browser-hole="true"]) {
+  position: relative;
+  z-index: 0;
+  background-color: transparent !important;
+}
+
+/* Keep outer layout wrappers transparent so the aurora canvas & mascot show through, while keeping dialogs/menus/cards opaque */
+body:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]):not([data-has-three-layer-browser-hole="true"]) :is(.agy-shell, .agy-inset-shell, .agy-sheet, .agy-sheet[data-sheet-inset] [data-main-content-body]) {
+  --shell-canvas: transparent !important;
+  background-color: transparent !important;
+}
+
+body:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]):not([data-has-three-layer-browser-hole="true"]) .agy-inset-shell [data-side-panel-body]:not([data-has-browser-hole="true"]):not(.browser-hole-opaque) {
+  background-color: var(--ag-side-panel-bg, var(--card)) !important;
+}
+
+/* Never let dialogs, settings modals, or popovers turn transparent (keep headless dialog/fastpick wrappers transparent so rounded cards have clean corners) */
+[role="dialog"].agy-dialog,
+[role="dialog"].settings-modal-container,
+[role="dialog"]:not([data-testid="fast-pick-viewport"] *):not(:has(.agy-fastpick, .quick-input-widget, [data-testid="fastpick"])):not(:not(.agy-dialog):not(.settings-modal-container):not([class*="rounded-"]):has(> * [class*="rounded-xl"], > * [class*="rounded-2xl"], > [class*="rounded-xl"], > [class*="rounded-2xl"])),
+.settings-modal-container,
+[data-ag-settings-right-pane] {
   background-color: var(--background) !important;
 }
 
-.bg-sidebar:not([data-has-browser-hole="true"]) {
-  background-color: var(--sidebar) !important;
+[data-radix-menu-content],
+[role="menu"],
+[role="listbox"]:has([role="option"], li, button, a),
+[id="antigravity.agentSidePanelInputBox"] > div[role="listbox"]:has([role="option"], li, button, a) {
+  background-color: var(--ag-popover-bg, var(--background)) !important;
+}
+
+:is([data-radix-menu-content], [role="menu"], [role="listbox"]:has([role="option"], li, button, a), [data-select-popup], #typeahead-menu:has([role="option"], [role="menuitem"], li, button, a)):not([class*="rounded-"]) {
+  border-radius: 12px !important;
+  overflow: hidden;
+}
+
+[role="tooltip"]:not([class*="rounded-"]),
+:is(.md-table-frame, .markdown-frontmatter):not([class*="rounded-"]) {
+  border-radius: 12px !important;
+  overflow: hidden;
+}
+
+#typeahead-menu:empty,
+#typeahead-menu:not(:has([role="option"], [role="menuitem"], li, button, a)),
+[role="listbox"]:empty,
+[role="listbox"]:not(:has([role="option"], li, button, a)) {
+  background-color: transparent !important;
+  border-color: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+
+[data-testid="fast-pick-viewport"] [role="dialog"],
+[role="dialog"]:has(.agy-fastpick, .quick-input-widget, [data-testid="fastpick"]),
+[role="dialog"]:not(.agy-dialog):not(.settings-modal-container):not([class*="rounded-"]):has(> * [class*="rounded-xl"], > * [class*="rounded-2xl"], > [class*="rounded-xl"], > [class*="rounded-2xl"]) {
+  background-color: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+[role="dialog"]:not([data-testid="fast-pick-viewport"] *):not(:has(.agy-fastpick, .quick-input-widget, [data-testid="fastpick"])):not(.agy-dialog):not([class*="rounded-"]):not(:has(> * [class*="rounded-xl"], > * [class*="rounded-2xl"], > [class*="rounded-xl"], > [class*="rounded-2xl"])),
+.settings-modal-container:not(.agy-dialog):not([class*="rounded-"]) {
+  border-radius: var(--nux-radius-2xl, 20px) !important;
+  overflow: hidden;
+}
+
+:is(.agy-fastpick, .quick-input-widget, [data-testid="fastpick"]) {
+  border-radius: 14px !important;
+}
+
+[data-testid="settings-sidebar"] {
+  background-color: var(--ag-s-sidebar, var(--background)) !important;
+}
+
+.bg-sidebar[data-ag-outer-sidebar="1"]:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]):not([data-has-three-layer-browser-hole="true"]):not(.agy-titlebar):not(.surface-opaque):not(.browser-hole-ancestor) {
+  background-color: var(--ag-sidebar-surface, var(--sidebar)) !important;
+  position: relative !important;
+  overflow: hidden !important;
+  isolation: isolate;
+}
+
+/* Seal the 1px split sash between sidebar and main pane */
+body:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]):not([data-has-three-layer-browser-hole="true"]) [data-testid="sidebar-split"] > [data-split-sash="true"] {
+  background-color: var(--ag-sash-hairline, rgba(232, 224, 250, 0.95)) !important;
+}
+
+/* Frosted glass top bar above main content pane */
+body:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]):not([data-has-three-layer-browser-hole="true"]) [data-main-content-header="true"] {
+  background-color: var(--ag-topbar-bg, rgba(247, 243, 255, 0.62)) !important;
+  border-bottom: 1px solid var(--ag-topbar-border, rgba(124, 58, 237, 0.11)) !important;
+}
+
+/* Keep inner virtualized sidebar headers/rows transparent and preserve native sticky/absolute positioning */
+.bg-sidebar[data-ag-outer-sidebar="1"] .bg-sidebar {
+  background-color: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Remove jarring solid/bright gradient strip (and its ::before shell gradient) behind sidebar row hover action buttons; fade title text via alpha mask instead */
+html body :is(.agy-sidebar-row, [data-testid="conversation-row-history"]) :is(.agy-row-actions, .agy-row-shortcut-badge) {
+  background: none !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+html body :is(.agy-sidebar-row, [data-testid="conversation-row-history"]) .agy-row-actions::before,
+html body .agy-sidebar-row .agy-row-shortcut-badge::before {
+  display: none !important;
+  content: none !important;
+  background: none !important;
+  background-image: none !important;
+}
+
+.agy-sidebar-row:is(:hover, :focus-within) > div.grow.min-w-0 {
+  -webkit-mask-image: linear-gradient(to right, #000 0%, #000 calc(100% - 76px), transparent calc(100% - 48px));
+  mask-image: linear-gradient(to right, #000 0%, #000 calc(100% - 76px), transparent calc(100% - 48px));
+}
+
+.bg-sidebar[data-ag-outer-sidebar="1"] > *:not(#ag-anime-mascot-layer) {
+  position: relative;
+  z-index: 1;
+}
+
+.bg-sidebar[data-ag-outer-sidebar="1"] :is(button.bg-background, a.bg-background) {
+  background-color: var(--ag-sidebar-btn-bg, rgba(255, 255, 255, 0.56)) !important;
+  border-color: var(--sidebar-border) !important;
+}
+
+.bg-sidebar[data-ag-outer-sidebar="1"] :is(button.bg-background, a.bg-background):hover {
+  background-color: var(--ag-sidebar-btn-hover-bg, rgba(255, 255, 255, 0.74)) !important;
+}
+
+/* Eliminate jarring solid scroll-fade light bars above composer over aurora canvas */
+[data-main-content-body] .pointer-events-none.absolute.bottom-0.z-10,
+[data-main-content-body] .pointer-events-none[class*="bg-gradient-to-t"],
+[data-main-content-body] .pointer-events-none[class*="from-background"] {
+  background-image: none !important;
+  background: transparent !important;
+}
+
+[data-main-content-body] > .overflow-y-auto,
+[data-main-content-body] .overflow-y-auto.isolate {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0px, #000 24px, #000 calc(100% - 18px), transparent 100%) !important;
+  mask-image: linear-gradient(to bottom, transparent 0px, #000 24px, #000 calc(100% - 18px), transparent 100%) !important;
+}
+
+/* Starlight Ambient Aurora Canvas (pure static backdrop, zero continuous repaint cost) */
+#ag-anime-bg-layer {
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  pointer-events: none;
+  background-color: var(--ag-root-bg, #0F0E1B);
+  background-image: var(--ag-aurora-canvas, none);
+}
+
+#ag-anime-mascot-layer {
+  position: fixed;
+  left: var(--ag-mascot-left, max(258px, calc(50vw - 590px)));
+  right: auto;
+  bottom: 20px;
+  z-index: -1;
+  pointer-events: none;
+  width: var(--ag-mascot-w, 316px);
+  height: var(--ag-mascot-h, 412px);
+  background-color: transparent;
+  background-image: var(--ag-mascot-active-img, var(--ag-anime-mascot-image, none));
+  background-size: contain;
+  background-position: center bottom;
+  background-repeat: no-repeat;
+  opacity: calc(var(--ag-mascot-opacity, 0.96) * var(--ag-mascot-avoid-opacity, 1));
+  transform-origin: left bottom;
+  transform: scale(var(--ag-mascot-scale, 0.88));
+  transition: opacity 200ms ease, transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Content-Left Stage (Default): generous full-body showcase beside the centered chat column */
+html[data-ag-mascot-pos="content-left"] #ag-anime-mascot-layer {
+  position: fixed;
+  left: var(--ag-mascot-left, max(258px, calc(50vw - 590px)));
+  right: auto;
+  bottom: 20px;
+  z-index: -1;
+  transform-origin: left bottom;
+  transform: scale(var(--ag-mascot-scale, 0.88));
+}
+
+html[data-ag-mascot-pos="sidebar"] .bg-sidebar > #ag-anime-mascot-layer {
+  position: absolute;
+  left: 50%;
+  right: auto;
+  bottom: 44px;
+  z-index: 0;
+  max-width: calc(100% - 8px);
+  background-position: center bottom;
+  opacity: calc(var(--ag-mascot-sidebar-opacity, 0.92) * var(--ag-mascot-avoid-opacity, 1));
+  transform-origin: center bottom;
+  transform: translateX(-50%) scale(var(--ag-mascot-avoid-scale, 1));
+}
+
+html[data-ag-mascot-size="sm"] #ag-anime-mascot-layer {
+  width: 256px;
+  height: 334px;
+}
+
+html[data-ag-mascot-pos="sidebar"][data-ag-mascot-size="sm"] .bg-sidebar > #ag-anime-mascot-layer {
+  width: 176px;
+  height: 196px;
+}
+
+html[data-ag-mascot-size="md"] #ag-anime-mascot-layer {
+  width: 316px;
+  height: 412px;
+}
+
+html[data-ag-mascot-pos="sidebar"][data-ag-mascot-size="md"] .bg-sidebar > #ag-anime-mascot-layer {
+  width: 226px;
+  height: 248px;
+}
+
+html[data-ag-mascot-size="lg"] #ag-anime-mascot-layer {
+  width: 368px;
+  height: 480px;
+}
+
+html[data-ag-mascot-pos="sidebar"][data-ag-mascot-size="lg"] .bg-sidebar > #ag-anime-mascot-layer {
+  width: 248px;
+  height: 280px;
+}
+
+/* Mascot pose variant selector + Agent 4-state reactive sprite */
+html[data-ag-mascot-variant="1"] #ag-anime-mascot-layer,
+html[data-ag-mascot-variant="auto"] #ag-anime-mascot-layer {
+  --ag-mascot-active-img: var(--ag-anime-mascot-1, var(--ag-anime-mascot-image, none));
+}
+
+html[data-ag-mascot-variant="3"] #ag-anime-mascot-layer,
+html[data-ag-mascot-variant="auto"][data-ag-composer-active="1"] #ag-anime-mascot-layer {
+  --ag-mascot-active-img: var(--ag-anime-mascot-3, var(--ag-anime-mascot-image, none));
+}
+
+html[data-ag-mascot-variant="2"] #ag-anime-mascot-layer,
+html[data-ag-mascot-variant="auto"][data-ag-agent-state="running"] #ag-anime-mascot-layer {
+  --ag-mascot-active-img: var(--ag-anime-mascot-2, var(--ag-anime-mascot-image, none));
+}
+
+html[data-ag-mascot-variant="4"] #ag-anime-mascot-layer,
+html[data-ag-mascot-variant="auto"][data-ag-agent-state="slow"] #ag-anime-mascot-layer,
+html[data-ag-mascot-variant="auto"][data-ag-agent-state="error"] #ag-anime-mascot-layer {
+  --ag-mascot-active-img: var(--ag-anime-mascot-4, var(--ag-anime-mascot-image, none));
+}
+
+html[data-ag-agent-state="running"] #ag-anime-mascot-layer {
+  opacity: calc(1 * var(--ag-mascot-avoid-opacity, 1));
+}
+
+/* Keep built-in browser WebContentsView holes 100% original & unobstructed */
+body[data-has-browser-hole="true"] #ag-anime-bg-layer,
+body[data-has-drawer-browser-hole="true"] #ag-anime-bg-layer,
+body[data-has-three-layer-browser-hole="true"] #ag-anime-bg-layer,
+body[data-has-browser-hole="true"] #ag-anime-mascot-layer,
+body[data-has-drawer-browser-hole="true"] #ag-anime-mascot-layer,
+body[data-has-three-layer-browser-hole="true"] #ag-anime-mascot-layer,
+body[data-has-browser-hole="true"] #ag-composer-companion,
+body[data-has-drawer-browser-hole="true"] #ag-composer-companion,
+body[data-has-three-layer-browser-hole="true"] #ag-composer-companion {
+  display: none !important;
+}
+
+/* Chibi Typing Companion docked right next to the chat composer: plays animated WebP on focus, freezes idle frame otherwise */
+#antigravity\.agentSidePanelInputBox,
+[id="antigravity.agentSidePanelInputBox"] {
+  overflow: visible !important;
+}
+
+#ag-composer-companion {
+  position: absolute;
+  left: calc(100% + 10px);
+  bottom: -2px;
+  width: 146px;
+  height: 90px;
+  pointer-events: none;
+  z-index: 2;
+  transform-origin: left bottom;
+  transform: scale(var(--ag-composer-companion-scale, 1));
+  opacity: var(--ag-composer-companion-opacity, 1);
+  transition: opacity 200ms ease, transform 200ms ease;
+}
+
+#ag-composer-companion::before,
+#ag-composer-companion::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-size: contain;
+  background-position: left bottom;
+  background-repeat: no-repeat;
+}
+
+#ag-composer-companion::before {
+  background-image: var(--ag-anime-composer-idle, none);
+}
+
+#ag-composer-companion::after {
+  display: none;
+  background-image: var(--ag-anime-composer-typing, none);
+}
+
+#antigravity\.agentSidePanelInputBox[data-ag-composer-active="1"] #ag-composer-companion::before,
+[id="antigravity.agentSidePanelInputBox"][data-ag-composer-active="1"] #ag-composer-companion::before {
+  display: none;
+}
+
+#antigravity\.agentSidePanelInputBox[data-ag-composer-active="1"] #ag-composer-companion::after,
+[id="antigravity.agentSidePanelInputBox"][data-ag-composer-active="1"] #ag-composer-companion::after {
+  display: block;
 }
 
 body[data-agy-font] :where(.font-sans, h1, h2, h3, h4, h5, h6, b, strong, i, em, .italic) {
@@ -110,23 +428,37 @@ code, pre, kbd, samp, .font-mono, .code-block, .code-block *, [class*="language-
   letter-spacing: normal !important;
 }
 
-/* Disable costly backdrop blur filters & fix card inset hairlines */
-.surface-glass,
-.agy-fastpick.surface-glass,
-.quick-input-widget.surface-glass,
-.agy-user-bubble {
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-}
-
 .agy-inset-shell {
-  --card-edge: var(--card-border, rgba(0, 0, 0, 0.08)) !important;
-  --sash-line: var(--card-border, rgba(0, 0, 0, 0.08)) !important;
+  --card-edge: transparent !important;
+  --sash-line: var(--card-border, rgba(139, 92, 246, 0.16)) !important;
 }
 
-.agy-sheet[data-sheet-inset] [data-main-content-body]::after,
+.agy-sheet[data-sheet-inset] [data-main-content-body]::after {
+  box-shadow: none !important;
+}
+
 .agy-inset-shell [data-side-panel-body]::after {
-  box-shadow: inset 0 0 0 1px var(--card-edge, rgba(0, 0, 0, 0.08)) !important;
+  box-shadow: inset 0 0 0 1px var(--card-border, rgba(139, 92, 246, 0.14)) !important;
+}
+
+/* User message attached image thumbnail: crisp frosted acrylic photo frame + scale-only hover (no clipped outer shadow box) */
+button.relative.shrink-0.inline-block.cursor-pointer.overflow-hidden.rounded-xl:has(> img.object-cover) {
+  padding: 3px !important;
+  margin: 3px !important;
+  border: 2px solid var(--ag-msg-img-border, rgba(139, 92, 246, 0.6)) !important;
+  border-radius: 14px !important;
+  background-color: var(--ag-msg-img-mat, rgba(255, 255, 255, 0.9)) !important;
+  box-shadow: none !important;
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1) !important;
+}
+
+button.relative.shrink-0.inline-block.cursor-pointer.overflow-hidden.rounded-xl:has(> img.object-cover) > img.object-cover {
+  border-radius: 9px !important;
+}
+
+button.relative.shrink-0.inline-block.cursor-pointer.overflow-hidden.rounded-xl:has(> img.object-cover):hover {
+  opacity: 1 !important;
+  transform: scale(1.05) !important;
 }
 
 /* Codex Composer Tray & Floating Inner Card Geometry
@@ -141,7 +473,6 @@ code, pre, kbd, samp, .font-mono, .code-block, .code-block *, [class*="language-
   border-radius: 21px !important;
   box-shadow: none !important;
   outline: none !important;
-  transition: border-color 180ms ease, box-shadow 180ms ease !important;
 }
 
 .surface-composer > .surface-composer-card,
@@ -149,7 +480,7 @@ body[data-agy-theme] .surface-composer > .surface-composer-card,
 body[data-agy-theme][data-newux-theme="onyx"] .surface-composer > .surface-composer-card,
 .surface-composer-card.bg-card,
 [id="antigravity.agentSidePanelInputBox"] .surface-composer-card,
-[id="antigravity.agentSidePanelInputBox"] > div.bg-card {
+[id="antigravity.agentSidePanelInputBox"] > div.bg-card:not([role="listbox"]) {
   background-color: var(--ag-composer-card-bg, #FFFFFF) !important;
   border: 1px solid var(--ag-composer-card-border, rgba(0, 0, 0, 0.07)) !important;
   border-radius: 20px !important;
@@ -158,13 +489,17 @@ body[data-agy-theme][data-newux-theme="onyx"] .surface-composer > .surface-compo
   transition: box-shadow 220ms cubic-bezier(0.16, 1, 0.3, 1), border-color 220ms ease !important;
 }
 
-body[data-agy-theme] .surface-composer:focus-within > .surface-composer-card,
-body[data-agy-theme][data-newux-theme="onyx"] .surface-composer:focus-within > .surface-composer-card,
-.surface-composer:focus-within > .surface-composer-card,
-.surface-composer-card:focus-within,
-[id="antigravity.agentSidePanelInputBox"]:focus-within .surface-composer-card {
-  border-color: var(--ag-composer-card-focus-border, rgba(0, 0, 0, 0.10)) !important;
-  box-shadow: var(--ag-composer-card-focus-shadow, 0 4px 16px rgba(0, 0, 0, 0.05), 0 1px 3px rgba(0, 0, 0, 0.03)) !important;
+body[data-agy-theme] [id="antigravity.agentSidePanelInputBox"][data-ag-composer-active="1"] > .surface-composer-card,
+body[data-agy-theme][data-newux-theme="onyx"] [id="antigravity.agentSidePanelInputBox"][data-ag-composer-active="1"] > .surface-composer-card,
+[id="antigravity.agentSidePanelInputBox"][data-ag-composer-active="1"] .surface-composer-card,
+[id="antigravity.agentSidePanelInputBox"][data-ag-composer-active="1"] > div.bg-card:not([role="listbox"]),
+.surface-composer:not(#antigravity\.agentSidePanelInputBox):focus-within > .surface-composer-card {
+  border-color: var(--ag-composer-card-focus-border, rgba(0, 0, 0, 0.14)) !important;
+  box-shadow: var(--ag-composer-card-focus-shadow, 0 6px 24px rgba(0, 0, 0, 0.07), 0 2px 6px rgba(0, 0, 0, 0.04)) !important;
+}
+
+#antigravity\.agentSidePanelInputBox:not([data-ag-composer-active="1"]) [data-lexical-editor="true"] {
+  caret-color: transparent !important;
 }
 
 /* Composer header pills, bottom controls, and primary action button */
@@ -189,15 +524,16 @@ body[data-agy-theme][data-newux-theme="onyx"] .surface-composer:focus-within > .
 
 #antigravity\.agentSidePanelInputBox :is([data-testid="voice-live-pill"], button[data-testid="send-button"], .agy-send-button),
 :is([data-testid="voice-live-pill"], button[data-testid="send-button"], .agy-send-button) {
-  background-color: var(--ag-send-btn-bg, #2B7FFF) !important;
+  background: var(--ag-send-btn-bg, linear-gradient(135deg, #8B5CF6 0%, #EC4899 100%)) !important;
   color: #FFFFFF !important;
-  border: 1px solid var(--ag-send-btn-border, #2B7FFF) !important;
-  box-shadow: var(--ag-send-btn-shadow, 0 2px 6px rgba(43, 127, 255, 0.28)) !important;
+  border: 0 !important;
+  border-radius: 9999px !important;
+  box-shadow: inset 0 0 0 1px var(--ag-send-btn-border, rgba(244, 114, 182, 0.5)), var(--ag-send-btn-shadow, 0 2px 10px rgba(168, 85, 247, 0.36)) !important;
 }
 
 #antigravity\.agentSidePanelInputBox :is([data-testid="voice-live-pill"], button[data-testid="send-button"], .agy-send-button):hover,
 :is([data-testid="voice-live-pill"], button[data-testid="send-button"], .agy-send-button):hover {
-  background-color: var(--ag-send-btn-hover-bg, #1D6FEF) !important;
+  background: var(--ag-send-btn-hover-bg, linear-gradient(135deg, #9D71FF 0%, #F472B6 100%)) !important;
   opacity: 1 !important;
 }
 

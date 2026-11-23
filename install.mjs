@@ -239,10 +239,27 @@ async function runInstall() {
     currentCfg.channel = 'auto';
   }
   if (presetArg) {
-    currentCfg.preset = presetArg === 'codex-dark' || presetArg === 'onyx-dark' ? 'codex-dark' : 'codex-pure-white';
-  } else if (currentCfg.preset !== 'codex-pure-white' && currentCfg.preset !== 'codex-dark') {
-    currentCfg.preset = currentCfg.preset === 'onyx-dark' ? 'codex-dark' : 'codex-pure-white';
+    currentCfg.preset =
+      presetArg === 'codex-pure-white' || presetArg === 'starlight-light' ? 'starlight-light' : 'starlight-dark';
+  } else if (
+    currentCfg.preset !== 'starlight-light' &&
+    currentCfg.preset !== 'starlight-dark' &&
+    currentCfg.preset !== 'codex-pure-white' &&
+    currentCfg.preset !== 'codex-dark'
+  ) {
+    currentCfg.preset = 'starlight-dark';
   }
+  delete currentCfg.showBg;
+  delete currentCfg.glassBlur;
+  if (typeof currentCfg.showMascot !== 'boolean') currentCfg.showMascot = true;
+  if (currentCfg.mascotPosition !== 'content-left' && currentCfg.mascotPosition !== 'sidebar') {
+    currentCfg.mascotPosition = 'content-left';
+  }
+  if (!['auto', '1', '2', '3', '4'].includes(String(currentCfg.mascotVariant || 'auto'))) {
+    currentCfg.mascotVariant = 'auto';
+  }
+  if (!currentCfg.mascotSize) currentCfg.mascotSize = 'md';
+  if (!currentCfg.bgDim) currentCfg.bgDim = 'medium';
   if (!currentCfg.telemetryLayout) currentCfg.telemetryLayout = 'compact';
   if (!currentCfg.telemetryCacheMode) currentCfg.telemetryCacheMode = 'session';
   if (!['segments', 'bar', 'rings', 'gauge', 'dots', 'compact'].includes(currentCfg.quotaStyle)) {

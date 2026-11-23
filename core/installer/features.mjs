@@ -27,21 +27,33 @@ export const BASE_SPARSE_PATHS = Object.freeze([
 export const FEATURE_GROUPS = Object.freeze({
   theme: {
     id: 'theme',
-    label: 'Codex 风格昼夜主题 (codex-pure-white / codex-dark)',
+    label: '星辉紫梦二次元昼夜主题 (starlight-dark / starlight-light + 看板娘)',
     configKeys: ['theme'],
     sparsePaths: [
+      '/core/assets/starlight-catgirl-1.webp',
+      '/core/assets/starlight-catgirl-2.webp',
+      '/core/assets/starlight-catgirl-3.webp',
+      '/core/assets/starlight-catgirl-4.webp',
+      '/core/assets/starlight-composer-idle.webp',
+      '/core/assets/starlight-composer-typing.webp',
       '/core/styles/00-base.css',
       '/core/styles/10-light-codex.css',
       '/core/styles/20-dark-codex.css',
       '/core/runtime/20-theme-sync.js'
     ],
     coreRelPaths: [
+      'assets/starlight-catgirl-1.webp',
+      'assets/starlight-catgirl-2.webp',
+      'assets/starlight-catgirl-3.webp',
+      'assets/starlight-catgirl-4.webp',
+      'assets/starlight-composer-idle.webp',
+      'assets/starlight-composer-typing.webp',
       'styles/00-base.css',
       'styles/10-light-codex.css',
       'styles/20-dark-codex.css',
       'runtime/20-theme-sync.js'
     ],
-    aliases: ['theme', 'codex', 'style', 'styles', 'css', 'dark', 'light']
+    aliases: ['theme', 'starlight', 'anime', 'codex', 'style', 'styles', 'css', 'dark', 'light']
   },
   i18n: {
     id: 'i18n',
