@@ -148,6 +148,13 @@
       /^Updated\s+(?:((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}|\d{1,2}月\d{1,2}日),\s*)?((?:上午|下午)?\s*\d{1,2}:\d{2}(?:\s*[AP]M)?)$/;
 
     const RE_FILES_CHANGED = /^(\d+)\s+files?\s+changed$/i;
+    const RE_STEPS_CHIP = /^(\d+(?:\/\d+)?)\s+steps?$/i;
+    const RE_DAYS_COUNT = /^(\d+)\s+days?$/i;
+    const RE_SECONDS_COUNT = /^(\d+)\s+seconds?$/i;
+    const RE_MOVE_TO_GROUP_NAMED = /^Move to Group:\s*(.+)$/i;
+    const RE_REMOVE_FROM_RECENT = /^Remove\s+(.+?)\s+from\s+Recent$/i;
+    const RE_SYSTEM_DEFAULT_APP = /^System default\s*\((.+)\)$/i;
+    const RE_DELETE_ENTITY = /^Delete\s+(project|workspace|group|conversation)$/i;
     const RE_TOOLS = /^(\d+)\s+tools?$/i;
     const RE_DEMOTED = /^(\d+)\s+demoted$/i;
     const RE_EXCLUDED = /^(\d+)\s+excluded$/i;
@@ -386,6 +393,12 @@
       if (trimmed === 'Plan' && baseVal === '计划' && contextEl.closest('[role="dialog"]')) {
         return '方案套餐';
       }
+      if (trimmed === 'Pin' && contextEl.closest('[data-testid="conversation-pin-menu-item"]')) {
+        return '置顶';
+      }
+      if (trimmed === 'Unpin' && contextEl.closest('[data-testid="conversation-pin-menu-item"]')) {
+        return '取消置顶';
+      }
       if (trimmed === 'Default') {
         if (contextEl.closest('[data-testid="permissions-default-tag"]')) {
           return '全局默认';
@@ -499,6 +512,9 @@
           return raw.replace(trimmed, () => mRel[1] + ' ' + unit + '前');
         }
         if (RE_UPDATES_COUNT.test(trimmed)) return raw.replace(RE_UPDATES_COUNT, '$1 条进展');
+        if (RE_STEPS_CHIP.test(trimmed)) return raw.replace(RE_STEPS_CHIP, '$1 步');
+        if (RE_DAYS_COUNT.test(trimmed)) return raw.replace(RE_DAYS_COUNT, '$1 天');
+        if (RE_SECONDS_COUNT.test(trimmed)) return raw.replace(RE_SECONDS_COUNT, '$1 秒');
         if (RE_FILES_CHANGED.test(trimmed)) return raw.replace(RE_FILES_CHANGED, '$1 个文件变更');
         if (RE_TOOLS.test(trimmed)) return raw.replace(RE_TOOLS, '$1 个工具');
         if (RE_DEMOTED.test(trimmed)) return raw.replace(RE_DEMOTED, '$1 项已降级');
@@ -516,6 +532,8 @@
         if (RE_SHOW_BREAKDOWNS.test(trimmed)) return raw.replace(RE_SHOW_BREAKDOWNS, '展开明细 ($1 项)');
         if (RE_SHOW_MORE_SUBAGENTS.test(trimmed)) return raw.replace(RE_SHOW_MORE_SUBAGENTS, '显示另外 $1 个子代理');
         if (RE_SEARCH_GOOGLE.test(trimmed)) return raw.replace(RE_SEARCH_GOOGLE, (_, q) => '使用 Google 搜索“' + q + '”');
+        const mSysDef = trimmed.match(RE_SYSTEM_DEFAULT_APP);
+        if (mSysDef) return raw.replace(trimmed, () => '系统默认（' + mSysDef[1].trim() + '）');
         if (!isInHeaderOrBreadcrumb(contextEl)) {
           const mSearch = trimmed.match(RE_EPHEMERAL_ACTIVE);
           if (mSearch) {
@@ -529,6 +547,10 @@
           return raw.replace(RE_PERM_DELETE, (_, target, cnt) => '永久删除 ' + target + ' 及 ' + cnt + ' 个进行中的会话。');
         }
       } else if (firstUpper === 'W' || firstUpper === 'M') {
+        if (firstUpper === 'M') {
+          const mMoveGrp = trimmed.match(RE_MOVE_TO_GROUP_NAMED);
+          if (mMoveGrp) return raw.replace(trimmed, () => '移至分组：' + mMoveGrp[1].trim());
+        }
         const mNamed = trimmed.match(RE_NAMED_LIMIT_RESETS);
         if (mNamed) {
           const pZh = NAMED_PERIOD_MAP[mNamed[1].toLowerCase()] || mNamed[1];
@@ -553,6 +575,10 @@
         if (mQuotaT) return raw.replace(trimmed, () => mQuotaT);
       } else if (firstUpper === 'E' || firstUpper === 'R' || firstUpper === 'L') {
         if (firstUpper === 'R') {
+          const mRemRecent = trimmed.match(RE_REMOVE_FROM_RECENT);
+          if (mRemRecent) {
+            return raw.replace(trimmed, () => '从最近记录移除 ' + mRemRecent[1].trim());
+          }
           const mResets = trimmed.match(RE_RESETS_IN);
           if (mResets) {
             return raw.replace(trimmed, () => formatCompactDurationZh(mResets[1]) + '后重置');
@@ -583,6 +609,11 @@
           }
         }
       } else if (firstUpper === 'D') {
+        const mDelEnt = trimmed.match(RE_DELETE_ENTITY);
+        if (mDelEnt) {
+          const entMap = { project: '项目', workspace: '工作区', group: '分组', conversation: '对话' };
+          return raw.replace(trimmed, () => '删除' + (entMap[mDelEnt[1].toLowerCase()] || mDelEnt[1]));
+        }
         const mNamedD = trimmed.match(RE_NAMED_LIMIT_RESETS);
         if (mNamedD) {
           const pZh = NAMED_PERIOD_MAP[mNamedD[1].toLowerCase()] || mNamedD[1];
@@ -590,6 +621,11 @@
         }
         if (RE_DELETED_RECORDINGS.test(trimmed)) {
           return raw.replace(RE_DELETED_RECORDINGS, '已删除 $1 条录音 ($2)');
+        }
+      } else if (firstUpper === 'V') {
+        const mVerTxt = trimmed.match(RE_ARIA_VERSION);
+        if (mVerTxt) {
+          return raw.replace(trimmed, () => '版本 ' + mVerTxt[1].trim());
         }
       } else if (firstUpper === 'U') {
         const mUpd = trimmed.match(RE_UPDATED_AT);
@@ -659,6 +695,18 @@
       }
 
       const lastCh = trimmed.charCodeAt(trimmed.length - 1);
+      if (lastCh === 41) {
+        if (trimmed.endsWith(' (Default)') && trimmed.length > 10) {
+          const base = trimmed.slice(0, -10).trim();
+          const baseZh = lookupRawDict(base) || base;
+          return raw.replace(trimmed, () => baseZh + '（默认）');
+        }
+        if (trimmed.endsWith(' (experimental)') && trimmed.length > 15) {
+          const base = trimmed.slice(0, -15).trim();
+          const baseZh = lookupRawDict(base) || base;
+          return raw.replace(trimmed, () => baseZh + '（实验性）');
+        }
+      }
       if (lastCh === 116 || lastCh === 84) {
         const mModLim = trimmed.match(RE_MODEL_NAMED_LIMIT);
         if (mModLim) {
@@ -668,6 +716,72 @@
       }
 
       return null;
+    }
+
+    // 拦截翻译 Electron 原生右键菜单（window.electronNative.showContextMenu 传入前由 ogb/mgb .map 构造的菜单描述符）
+    const origArrayMap = window.__ag_orig_array_map || Array.prototype.map;
+    window.__ag_orig_array_map = origArrayMap;
+    const SKIP_NATIVE_MENU_ID_RE = /^(?:project-(?!new$|remove$)|group-(?!new$|remove$)|message-timestamp$)/;
+
+    function isNativeContextMenuEntry(item) {
+      if (!item || typeof item !== 'object') return false;
+      if (item.type === 'separator') return true;
+      return (
+        (typeof item.label === 'string' || item.label === undefined) &&
+        'accelerator' in item &&
+        (('checked' in item && 'disabled' in item && !('onClick' in item)) ||
+          ('click' in item && 'enabled' in item && typeof item.click === 'function'))
+      );
+    }
+
+    function translateNativeMenuItemLabel(rawLabel, itemId) {
+      if (!rawLabel || typeof rawLabel !== 'string') return rawLabel;
+      if (itemId && SKIP_NATIVE_MENU_ID_RE.test(String(itemId))) return rawLabel;
+      if (itemId === 'pin' && rawLabel === 'Pin') return '置顶';
+      if (itemId === 'pin' && rawLabel === 'Unpin') return '取消置顶';
+      const next = computeTextTranslation(rawLabel, null);
+      return typeof next === 'string' ? next : rawLabel;
+    }
+
+    const patchedArrayMap = function map(callback, thisArg) {
+      const res = origArrayMap.call(this, callback, thisArg);
+      const len = res.length;
+      if (len === 0 || len > 64) return res;
+      let probe = null;
+      for (let i = 0; i < len; i++) {
+        const cand = res[i];
+        if (!cand || typeof cand !== 'object') return res;
+        if (cand.type === 'separator') continue;
+        probe = cand;
+        break;
+      }
+      if (!probe || !('accelerator' in probe) || !isNativeContextMenuEntry(probe)) return res;
+      for (let i = 0; i < len; i++) {
+        const entry = res[i];
+        if (entry && isNativeContextMenuEntry(entry) && typeof entry.label === 'string' && entry.label) {
+          entry.label = translateNativeMenuItemLabel(entry.label, entry.id);
+        }
+      }
+      return res;
+    };
+
+    Object.defineProperty(Array.prototype, 'map', {
+      value: patchedArrayMap,
+      writable: true,
+      configurable: true,
+      enumerable: false
+    });
+    if (Array.isArray(window.__ag_cleanup_fns)) {
+      window.__ag_cleanup_fns.push(() => {
+        if (window.__ag_orig_array_map) {
+          Object.defineProperty(Array.prototype, 'map', {
+            value: window.__ag_orig_array_map,
+            writable: true,
+            configurable: true,
+            enumerable: false
+          });
+        }
+      });
     }
 
     function translateTextNode(node) {

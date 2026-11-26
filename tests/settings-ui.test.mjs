@@ -440,6 +440,89 @@ test('60-i18n-engine handles Antigravity 2.35.1 sentence-case labels, Thinking f
   );
   assert.equal(attrEls[2].getAttribute('placeholder'), '搜索快捷键...');
   assert.equal(attrEls[3].getAttribute('aria-label'), '智能体运行位置，当前：本机');
+
+  // Verify Electron native right-click context menu (ogb/showContextMenu) translation & safe scoping
+  const desc = vm.runInContext('Object.getOwnPropertyDescriptor(Array.prototype, "map")', sandbox);
+  assert.equal(desc.enumerable, false, 'Array.prototype.map must stay non-enumerable');
+
+  const nativeMenuResult = vm.runInContext(
+    `(() => {
+      function ogb(items, mapObj, prefix = 'cmi') {
+        return items.map((d, idx) => {
+          const id = d.id || prefix + '-' + idx;
+          if (d.onClick) mapObj.set(id, d.onClick);
+          const out = {
+            id,
+            label: d.label,
+            type: d.type && d.type !== 'item' && d.type !== 'label' ? d.type : 'normal',
+            checked: d.checked,
+            disabled: d.type === 'label' ? true : d.disabled,
+            accelerator: d.accelerator
+          };
+          if (d.items && d.items.length > 0) out.submenu = ogb(d.items, mapObj, id + '-sub');
+          return out;
+        });
+      }
+      const handlers = new Map();
+      return ogb([
+        { id: 'rename', label: 'Rename', onClick: () => {} },
+        { id: 'pin', label: 'Pin', accelerator: 'Alt+Shift+P', onClick: () => {} },
+        { id: 'mark-read', label: 'Mark Unread', onClick: () => {} },
+        { type: 'separator' },
+        {
+          id: 'copy',
+          type: 'submenu',
+          label: 'Copy',
+          items: [
+            { id: 'copy-0', label: 'Conversation Name', onClick: () => {} },
+            { id: 'copy-1', label: 'Workspace Name', onClick: () => {} }
+          ]
+        },
+        {
+          id: 'split',
+          type: 'submenu',
+          label: 'Split',
+          items: [
+            { id: 'split-0', label: 'Split Right', onClick: () => {} },
+            { id: 'split-1', label: 'Split Down', onClick: () => {} }
+          ]
+        },
+        {
+          id: 'move-to-project',
+          type: 'submenu',
+          label: 'Move to Project',
+          items: [
+            { id: 'project-user123', label: 'Code', type: 'checkbox', checked: true, onClick: () => {} },
+            { id: 'project-new', label: 'New Project...', onClick: () => {} },
+            { id: 'project-remove', label: 'Remove from Project', onClick: () => {} }
+          ]
+        },
+        { type: 'separator' },
+        { id: 'archive', label: 'Archive', accelerator: 'Alt+Ctrl+A', onClick: () => {} },
+        { id: 'delete', label: 'Delete', onClick: () => {} },
+        { id: 'open-def', label: 'Side Panel (Default)', onClick: () => {} }
+      ], handlers);
+    })()`,
+    sandbox
+  );
+
+  assert.equal(nativeMenuResult[0].label, '重命名');
+  assert.equal(nativeMenuResult[1].label, '置顶');
+  assert.equal(nativeMenuResult[1].accelerator, 'Alt+Shift+P');
+  assert.equal(nativeMenuResult[2].label, '标为未读');
+  assert.equal(nativeMenuResult[4].label, '复制');
+  assert.equal(nativeMenuResult[4].submenu[0].label, '对话名称');
+  assert.equal(nativeMenuResult[4].submenu[1].label, '工作区名称');
+  assert.equal(nativeMenuResult[5].label, '分屏');
+  assert.equal(nativeMenuResult[5].submenu[0].label, '向右分屏');
+  assert.equal(nativeMenuResult[5].submenu[1].label, '向下分屏');
+  assert.equal(nativeMenuResult[6].label, '移至项目');
+  assert.equal(nativeMenuResult[6].submenu[0].label, 'Code', 'User project names must never be translated');
+  assert.equal(nativeMenuResult[6].submenu[1].label, '新建项目...');
+  assert.equal(nativeMenuResult[6].submenu[2].label, '从项目移除');
+  assert.equal(nativeMenuResult[8].label, '归档');
+  assert.equal(nativeMenuResult[9].label, '删除');
+  assert.equal(nativeMenuResult[10].label, '右侧边栏（默认）');
 });
 
 test('updater validates semver/paths, verifies SHA-256, backs up core/, and preserves user/', async () => {
