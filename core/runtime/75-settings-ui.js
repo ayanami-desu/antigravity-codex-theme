@@ -142,6 +142,7 @@
       let scanTimer = null;
       let statusPollTimer = null;
       let saveBadgeTimer = null;
+      let applyTimeoutTimer = null;
       let hoverSwitchTimer = null;
       let lastSubAnchorBtn = null;
       let hoveredFamilyKey = '';
@@ -164,6 +165,56 @@
           code: typeof src.code === 'string' ? src.code : ''
         };
       };
+      function getShortVersionTag() {
+        const m = String(PATCH_VERSION || '').match(/^(\d+\.\d+(?:\.\d+)?)/);
+        return m ? 'v' + m[1] : 'v1.2';
+      }
+
+      const currentBootSeq =
+        typeof BUNDLE_BOOT_SEQ === 'number' ? BUNDLE_BOOT_SEQ : Number(window.__ag_bundle_boot_seq) || 0;
+
+      const initialUpdateState = (() => {
+        const fallback = {
+          phase: 'idle',
+          status: 'idle',
+          currentVersion: '',
+          latestVersion: '',
+          updateAvailable: false,
+          canSyncMain: false,
+          changedCount: 0,
+          targetRef: 'main',
+          error: ''
+        };
+        const cached =
+          window.__ag_settings_update_cache && typeof window.__ag_settings_update_cache === 'object'
+            ? Object.assign({}, window.__ag_settings_update_cache)
+            : null;
+        if (!cached) return fallback;
+        if (cached.status === 'applied') {
+          const liveShort = getShortVersionTag().replace(/^v/i, '');
+          const targetShort = String(cached.currentVersion || cached.latestVersion || '').replace(/^v/i, '');
+          let reloadedToNewBundle = false;
+          if (typeof cached.appliedAtBootSeq === 'number' && cached.appliedAtBootSeq > 0) {
+            reloadedToNewBundle = currentBootSeq > cached.appliedAtBootSeq;
+          } else if (cached.appliedFromPatchVersion) {
+            reloadedToNewBundle = cached.appliedFromPatchVersion !== PATCH_VERSION;
+          } else {
+            reloadedToNewBundle = Boolean(targetShort && liveShort === targetShort);
+          }
+          if (reloadedToNewBundle) {
+            const resolved = Object.assign({}, fallback, {
+              phase: 'done',
+              status: 'up_to_date',
+              currentVersion: liveShort || targetShort,
+              latestVersion: liveShort || targetShort
+            });
+            window.__ag_settings_update_cache = Object.assign({}, resolved);
+            return resolved;
+          }
+        }
+        return cached;
+      })();
+
       const uiState = {
         config: {
           telemetryLayout: bootUserCfg.telemetryLayout || boot.telemetryLayout || 'compact',
@@ -191,23 +242,8 @@
           window.__ag_settings_fonts_cache && typeof window.__ag_settings_fonts_cache === 'object'
             ? window.__ag_settings_fonts_cache
             : { sans: [], mono: [] },
-        update: (window.__ag_settings_update_cache && Object.assign({}, window.__ag_settings_update_cache)) || {
-          phase: 'idle',
-          status: 'idle',
-          currentVersion: '',
-          latestVersion: '',
-          updateAvailable: false,
-          canSyncMain: false,
-          changedCount: 0,
-          targetRef: 'main',
-          error: ''
-        }
+        update: initialUpdateState
       };
-
-      function getShortVersionTag() {
-        const m = String(PATCH_VERSION || '').match(/^(\d+\.\d+(?:\.\d+)?)/);
-        return m ? 'v' + m[1] : 'v1.2';
-      }
 
       function isZhUi() {
         return Boolean(uiState.config.modules.i18n);
@@ -616,6 +652,9 @@
             status: 'applied',
             currentVersion: res.version || uiState.update.latestVersion,
             latestVersion: res.version || uiState.update.latestVersion,
+            appliedFromPatchVersion: PATCH_VERSION,
+            appliedAtBootSeq: currentBootSeq,
+            appliedAt: Date.now(),
             updateAvailable: false,
             canSyncMain: false,
             changedCount: 0,
@@ -624,6 +663,20 @@
           };
           window.__ag_settings_saved_label = 'refreshed';
           window.__ag_settings_saved_until = Date.now() + 3000;
+          if (applyTimeoutTimer) clearTimeout(applyTimeoutTimer);
+          applyTimeoutTimer = setTimeout(() => {
+            applyTimeoutTimer = null;
+            if (disposed || uiState.update.status !== 'applied') return;
+            uiState.update = Object.assign({}, uiState.update, {
+              phase: 'done',
+              status: 'error',
+              error: isZhUi()
+                ? '文件已更新，但后台服务热重载超时；请在终端运行 node ~/.gemini/antigravity/codex-theme/install.mjs install 完成重启'
+                : 'Files updated, but daemon hot-reload timed out; run node ~/.gemini/antigravity/codex-theme/install.mjs install'
+            });
+            window.__ag_settings_update_cache = Object.assign({}, uiState.update);
+            renderPane();
+          }, 15000);
         }
         window.__ag_settings_update_cache = Object.assign({}, uiState.update);
         renderPane();
@@ -2604,6 +2657,7 @@
           if (scanTimer) clearTimeout(scanTimer);
           if (statusPollTimer) clearInterval(statusPollTimer);
           if (saveBadgeTimer) clearTimeout(saveBadgeTimer);
+          if (applyTimeoutTimer) clearTimeout(applyTimeoutTimer);
           if (hoverSwitchTimer) clearTimeout(hoverSwitchTimer);
           if (observer) observer.disconnect();
           document.removeEventListener('click', onDocClick, true);

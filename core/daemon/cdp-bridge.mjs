@@ -865,12 +865,20 @@ export function createCdpManager({
                   out = { ok: false, applied: false, error: 'Update already in progress' };
                 } else {
                   updateApplyInFlight = true;
+                  let keepLockForRestart = false;
                   try {
                     out = await applyPluginUpdate({ targetDir: ROOT_DIR, ref, scheduleRestart: true });
+                    keepLockForRestart = Boolean(out?.ok && out?.restarting);
                   } catch (err) {
                     out = { ok: false, applied: false, error: err?.message || String(err || 'Update failed') };
                   } finally {
-                    updateApplyInFlight = false;
+                    if (keepLockForRestart) {
+                      setTimeout(() => {
+                        updateApplyInFlight = false;
+                      }, 20000).unref?.();
+                    } else {
+                      updateApplyInFlight = false;
+                    }
                   }
                 }
                 if (ws.readyState === WebSocket.OPEN) {

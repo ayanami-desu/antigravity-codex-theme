@@ -11,6 +11,7 @@ import {
   inspectDaemonPidStatus,
   isPidAlive,
   resolveStableNodeExecPath,
+  sleepSync,
   terminateDaemonPids
 } from '../shared.mjs';
 
@@ -200,12 +201,55 @@ export function cleanupLegacyServices() {
   }
 }
 
-export function registerSystemService(targetDir, wrapperDaemon) {
+export function isRunningInsideManagedService({
+  platform = process.platform,
+  env = process.env,
+  argv = process.argv,
+  ppid = process.ppid,
+  readFileSyncImpl = fs.readFileSync,
+  inspectDaemonPidStatusImpl = inspectDaemonPidStatus
+} = {}) {
+  if (env?.AG_FROM_DAEMON_UPDATER === '1' || (Array.isArray(argv) && argv.includes('--from-updater'))) {
+    return true;
+  }
+  if (platform === 'darwin') {
+    if (String(env?.XPC_SERVICE_NAME || '').trim() === SERVICE_IDS.macLabel) {
+      return true;
+    }
+  } else if (platform === 'linux') {
+    try {
+      const cgroup = String(readFileSyncImpl('/proc/self/cgroup', 'utf8') || '');
+      if (cgroup.includes(SERVICE_IDS.linuxUnit)) return true;
+    } catch {}
+  }
+  if (Number.isInteger(ppid) && ppid > 1) {
+    try {
+      if (
+        inspectDaemonPidStatusImpl(ppid, LEGACY_EXTRA_PATTERNS, {
+          platform,
+          excludePids: [process.pid],
+          requireCommandLineMatch: true
+        }) === 'daemon'
+      ) {
+        return true;
+      }
+    } catch {}
+  }
+  return false;
+}
+
+export function registerSystemService(
+  targetDir,
+  wrapperDaemon,
+  { fromManagedService = isRunningInsideManagedService() } = {}
+) {
   const home = os.homedir();
   const nodeExecPath = resolveStableNodeExecPath();
   cleanupLegacyServices();
-  stopActiveSystemService();
-  stopRunningDaemonProcesses();
+  if (!fromManagedService) {
+    stopActiveSystemService();
+    stopRunningDaemonProcesses();
+  }
 
   if (process.platform === 'darwin') {
     const launchAgentsDir = path.join(home, 'Library', 'LaunchAgents');
@@ -234,6 +278,10 @@ export function registerSystemService(targetDir, wrapperDaemon) {
     <true/>
     <key>KeepAlive</key>
     <true/>
+    <key>AbandonProcessGroup</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>2</integer>
     <key>StandardOutPath</key>
     <string>${SERVICE_IDS.macLogOut}</string>
     <key>StandardErrorPath</key>
@@ -244,6 +292,37 @@ export function registerSystemService(targetDir, wrapperDaemon) {
     fs.writeFileSync(activePlist, plistContent, 'utf8');
     try {
       const uid = process.getuid ? process.getuid() : 501;
+      let alreadyLoaded = false;
+      if (fromManagedService) {
+        try {
+          execSync(`launchctl print gui/${uid}/${label} >/dev/null 2>&1`);
+          alreadyLoaded = true;
+        } catch {
+          alreadyLoaded = false;
+        }
+      }
+      if (fromManagedService && alreadyLoaded) {
+        // Running inside the active LaunchAgent job (e.g., self-update from settings panel).
+        // Never call `bootout` here because launchd would terminate this installer before `bootstrap`.
+        // `kickstart -k` tells launchd (PID 1) to atomically restart the job with the updated code.
+        const kickRes = spawnSync('launchctl', ['kickstart', '-k', `gui/${uid}/${label}`], {
+          stdio: 'ignore',
+          timeout: 5000
+        });
+        if (!kickRes.error && kickRes.status === 0) {
+          return {
+            platform: 'darwin',
+            serviceFile: activePlist,
+            label,
+            nodeExecPath,
+            restartedInPlace: true,
+            runningNow: true
+          };
+        }
+      }
+      if (fromManagedService) {
+        stopRunningDaemonProcesses();
+      }
       bootoutMacLabel(uid, label);
       let bootstrapped = false;
       for (let attempt = 0; attempt < 6; attempt += 1) {
@@ -276,12 +355,44 @@ After=default.target
 ExecStart="${nodeExecPath}" --disable-warning=ExperimentalWarning "${wrapperDaemon}"
 Restart=always
 RestartSec=3
+KillMode=process
 
 [Install]
 WantedBy=default.target
 `;
     fs.writeFileSync(serviceFile, unitContent, 'utf8');
     try {
+      if (fromManagedService) {
+        // Running inside the active systemd cgroup; avoid `stop` (which kills this installer).
+        // `daemon-reload` + `enable` + `restart --no-block` lets systemd atomically swap the daemon.
+        execSync(`systemctl --user daemon-reload && systemctl --user enable ${SERVICE_IDS.linuxUnit} 2>/dev/null || true`);
+        const restartRes = spawnSync('systemctl', ['--user', 'restart', '--no-block', SERVICE_IDS.linuxUnit], {
+          stdio: 'ignore',
+          timeout: 5000
+        });
+        if (!restartRes.error && restartRes.status === 0) {
+          return { platform: 'linux', serviceFile, nodeExecPath, restartedInPlace: true, runningNow: true };
+        }
+        // Fallback for non-systemd Linux / WSL or inactive user bus: stop old daemon & spawn detached directly.
+        stopRunningDaemonProcesses();
+        let spawnedPid = null;
+        try {
+          const child = spawn(nodeExecPath, ['--disable-warning=ExperimentalWarning', wrapperDaemon], {
+            detached: true,
+            stdio: 'ignore'
+          });
+          child.unref();
+          spawnedPid = child.pid || null;
+        } catch {}
+        return {
+          platform: 'linux',
+          serviceFile,
+          nodeExecPath,
+          restartedInPlace: false,
+          spawnedPid,
+          runningNow: Boolean(spawnedPid)
+        };
+      }
       execSync(
         `systemctl --user daemon-reload && systemctl --user enable --now ${SERVICE_IDS.linuxUnit} && systemctl --user restart ${SERVICE_IDS.linuxUnit} 2>/dev/null || true`
       );
@@ -290,6 +401,11 @@ WantedBy=default.target
   }
 
   if (process.platform === 'win32') {
+    if (fromManagedService) {
+      // Avoid `schtasks /End` (which may tear down the task job object hosting this installer);
+      // sweep only confirmed daemon node.exe PIDs (install.mjs is excluded and taskkill omits /T).
+      stopRunningDaemonProcesses();
+    }
     const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
     const startupDir = path.join(appData, 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup');
     const vbsFile = path.join(startupDir, SERVICE_IDS.winVbsName);
@@ -363,9 +479,30 @@ WantedBy=default.target
     }
 
     let spawnedPid = null;
+    if (scheduledTaskStarted) {
+      // On Windows, `schtasks /Run` can return exit code 0 even when Task Scheduler drops the run
+      // under its default MultipleInstancesPolicy=IgnoreNew (e.g. during self-update from the task).
+      // Verify a real daemon PID actually appeared; otherwise fall back to spawning directly.
+      let confirmedAlive = false;
+      for (let i = 0; i < 4; i += 1) {
+        sleepSync(300);
+        const livePids = findRunningDaemonPids({
+          platform: 'win32',
+          excludePids: [process.pid],
+          extraPatterns: LEGACY_EXTRA_PATTERNS
+        });
+        if (livePids.length > 0) {
+          confirmedAlive = true;
+          break;
+        }
+      }
+      if (!confirmedAlive) {
+        scheduledTaskStarted = false;
+      }
+    }
     if (!scheduledTaskStarted) {
       try {
-        const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', wrapperDaemon], {
+        const child = spawn(nodeExecPath, ['--disable-warning=ExperimentalWarning', wrapperDaemon], {
           detached: true,
           stdio: 'ignore',
           windowsHide: true

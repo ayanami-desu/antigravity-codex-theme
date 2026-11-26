@@ -370,6 +370,18 @@ export async function applyPluginUpdate({
       const stagedTopFile = path.join(stageTop, topFile);
       if (fs.existsSync(stagedTopFile)) {
         fs.copyFileSync(stagedTopFile, path.join(targetDir, topFile));
+      } else if (topFile === 'package.json') {
+        // Keep local package.json version aligned with remoteManifest.version even if package.json fetch failed
+        const localPkgPath = path.join(targetDir, 'package.json');
+        if (fs.existsSync(localPkgPath) && typeof remoteManifest.version === 'string' && remoteManifest.version) {
+          try {
+            const parsedPkg = JSON.parse(fs.readFileSync(localPkgPath, 'utf8'));
+            if (parsedPkg && typeof parsedPkg === 'object') {
+              parsedPkg.version = remoteManifest.version;
+              fs.writeFileSync(localPkgPath, JSON.stringify(parsedPkg, null, 2) + '\n', 'utf8');
+            }
+          } catch {}
+        }
       }
     }
 
@@ -381,18 +393,31 @@ export async function applyPluginUpdate({
       const installScript = path.join(targetDir, 'install.mjs');
       if (fs.existsSync(installScript)) {
         setTimeout(() => {
+          let logFd = null;
           try {
+            try {
+              logFd = fs.openSync(path.join(targetDir, 'last-update.log'), 'w');
+            } catch {
+              logFd = null;
+            }
             const child = spawn(
               process.execPath,
-              ['--disable-warning=ExperimentalWarning', installScript, 'install', '--target-dir', targetDir],
+              ['--disable-warning=ExperimentalWarning', installScript, 'install', '--target-dir', targetDir, '--from-updater'],
               {
                 detached: true,
-                stdio: 'ignore',
-                windowsHide: true
+                stdio: logFd !== null ? ['ignore', logFd, logFd] : 'ignore',
+                windowsHide: true,
+                env: Object.assign({}, process.env, { AG_FROM_DAEMON_UPDATER: '1' })
               }
             );
             child.unref();
-          } catch {}
+          } catch {} finally {
+            if (logFd !== null) {
+              try {
+                fs.closeSync(logFd);
+              } catch {}
+            }
+          }
         }, 350);
       }
     }

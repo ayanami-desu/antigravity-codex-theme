@@ -377,7 +377,8 @@ export function inspectDaemonPidStatus(
     platform = process.platform,
     excludePids = [process.pid],
     isAliveImpl = isPidAlive,
-    spawnSyncImpl = spawnSync
+    spawnSyncImpl = spawnSync,
+    requireCommandLineMatch = false
   } = {}
 ) {
   const exclude = new Set(
@@ -413,11 +414,13 @@ export function inspectDaemonPidStatus(
               ? 'daemon'
               : 'other';
           }
+          if (requireCommandLineMatch) return 'unknown';
           // Elevated/cross-session node.exe whose CommandLine is hidden by Windows UAC; PID came from our .pid file
           return name === 'node.exe' ? 'daemon' : 'unknown';
         }
       } catch {}
     }
+    if (requireCommandLineMatch) return 'unknown';
     try {
       const res = spawnSyncImpl('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], {
         windowsHide: true,

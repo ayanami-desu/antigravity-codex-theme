@@ -406,6 +406,7 @@
       let internalFetchDepth = 0;
       let fetchInFlight = false;
       let pendingForceRefresh = false;
+      let pendingForceManual = false;
       let hasDoneInitialForceRefresh = false;
       let lastFetchAt = 0;
       let lastForceFetchAt = 0;
@@ -634,12 +635,12 @@
         return (
           '<svg class="ag-quota-gauge-svg" data-level="' +
           level +
-          '" width="48" height="25" viewBox="0 0 48 25" aria-hidden="true">' +
-          '<path class="ag-quota-gauge-track" d="M4 23 A20 20 0 0 1 44 23"/>' +
+          '" width="56" height="30" viewBox="0 0 56 30" aria-hidden="true">' +
+          '<path class="ag-quota-gauge-track" d="M4 27 A24 24 0 0 1 52 27"/>' +
           (clamped > 0
             ? '<path class="ag-quota-gauge-arc" pathLength="100" stroke-dasharray="' +
               clamped +
-              ' 100" d="M4 23 A20 20 0 0 1 44 23"/>'
+              ' 100" d="M4 27 A24 24 0 0 1 52 27"/>'
             : '') +
           '</svg>'
         );
@@ -1063,7 +1064,10 @@
           return;
         }
         if (fetchInFlight) {
-          if (wantForce) pendingForceRefresh = true;
+          if (wantForce) {
+            pendingForceRefresh = true;
+            if (manual) pendingForceManual = true;
+          }
           return;
         }
         const svc = findCloudCodeService();
@@ -1100,8 +1104,10 @@
         }
         if (!disposed && !document.hidden) {
           if (pendingForceRefresh) {
+            const nextManual = pendingForceManual;
             pendingForceRefresh = false;
-            void fetchQuota(true);
+            pendingForceManual = false;
+            void fetchQuota(true, nextManual ? { manual: true } : null);
           } else if (shouldFollowUpForce && fetchOk) {
             void fetchQuota(true);
           }

@@ -981,3 +981,78 @@ test('quotaSidebar=false keeps the telemetry panel footer but never mounts the s
   const foot = tt.querySelector('.ag-quota-tt');
   assert.ok(foot && foot.innerHTML.includes('Active') && foot.innerHTML.includes('>5h<'), 'Panel footer still renders');
 });
+
+test('gauge style renders enlarged 56x30 SVG arc and high-specificity percentage CSS to avoid 100% overlap (Issue #13)', async () => {
+  const parts = ['00-head.js', '30-antigravity-probe.js', '55-quota-ui.js', '90-tail.js'];
+  const code = parts.map((p) => fs.readFileSync(path.join(RUNTIME_DIR, p), 'utf8')).join('\n');
+  const css = fs.readFileSync(path.join(ROOT_DIR, 'core', 'styles', '35-quota.css'), 'utf8');
+
+  const body = new FakeElement('BODY');
+  body._isRoot = true;
+  const head = new FakeElement('HEAD');
+  head._isRoot = true;
+  const sidebarBottom = new FakeElement('DIV');
+  sidebarBottom.appendChild(new FakeElement('BUTTON', { 'data-testid': 'settings-button' }));
+  body.appendChild(sidebarBottom);
+
+  const fakeService = { async retrieveUserQuotaSummary() { return SAMPLE_QUOTA_RESPONSE; } };
+  sidebarBottom.__reactFiber$test = { memoizedProps: { value: { core: { cloudCodeService: fakeService } } }, return: null };
+
+  const fakeDoc = {
+    head, body, hidden: false, documentElement: new FakeElement('HTML'),
+    getElementById: (id) => head.querySelector('#' + id) || body.querySelector('#' + id),
+    createElement: (tag) => new FakeElement(tag),
+    getElementsByTagName: (t) => (t === 'head' ? [head] : []),
+    querySelector: (sel) => body.querySelector(sel),
+    querySelectorAll: (sel) => body.querySelectorAll(sel),
+    addEventListener() {}, removeEventListener() {}
+  };
+  const sandbox = {
+    __AG_BOOT_PAYLOAD__: {
+      version: '1.4.1-test', platform: 'darwin', enabled: true, cssText: '', customCss: '', themeVars: {}, i18nDict: {},
+      quotaStyle: 'gauge',
+      modules: { theme: false, i18n: false, metrics: false, quota: false, quotaSidebar: true, promptSuggestions: false, deadlockHealer: false, zoomShortcuts: false },
+      selectors: {}, userConfig: { quotaStyle: 'gauge', modules: { quota: false, quotaSidebar: true } }, customJs: ''
+    },
+    location: { pathname: '/', href: 'http://127.0.0.1/', search: '' },
+    navigator: { platform: 'MacIntel', onLine: true },
+    history: { pushState() {}, replaceState() {} },
+    innerWidth: 1280, innerHeight: 900, document: fakeDoc,
+    addEventListener() {}, removeEventListener() {},
+    setInterval: () => 1, clearInterval() {}, setTimeout: (fn) => { fn(); return 1; }, clearTimeout() {},
+    requestAnimationFrame: () => 1,
+    MutationObserver: class { observe() {} disconnect() {} },
+    console
+  };
+  sandbox.window = sandbox;
+  sandbox.top = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(`const __AG_BOOT_PAYLOAD__ = globalThis.__AG_BOOT_PAYLOAD__;\n${code}`, sandbox);
+  await new Promise((r) => setImmediate(r));
+
+  const quotaEl = fakeDoc.getElementById('ag-quota');
+  assert.ok(quotaEl, 'Sidebar quota element should mount in gauge style');
+  assert.ok(
+    quotaEl.innerHTML.includes('width="56" height="30" viewBox="0 0 56 30"'),
+    'Gauge SVG must use enlarged 56x30 geometry'
+  );
+  assert.ok(
+    quotaEl.innerHTML.includes('d="M4 27 A24 24 0 0 1 52 27"'),
+    'Gauge SVG arc path must span r=24 semicircle'
+  );
+  assert.ok(
+    quotaEl.innerHTML.includes('<b class="ag-quota-gauge-pct">100%</b>'),
+    'Gauge tile should render 100% inside b.ag-quota-gauge-pct'
+  );
+  assert.match(
+    css,
+    /#ag-quota \.ag-quota-tile b\.ag-quota-gauge-pct\s*\{[^}]*font-size:\s*10\.5px;/,
+    '35-quota.css must override #ag-quota .ag-quota-tile b specificity for gauge percentage text'
+  );
+  assert.match(
+    css,
+    /#ag-quota \.ag-quota-gauge-dial\s*\{[^}]*width:\s*56px;[^}]*height:\s*30px;/,
+    '35-quota.css must match 56x30 gauge dial container dimensions'
+  );
+  for (const fn of sandbox.__ag_cleanup_fns) fn();
+});

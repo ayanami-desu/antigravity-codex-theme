@@ -12,7 +12,8 @@
   if (window.top !== window && !IS_SWARM_PLUGIN_FRAME) return;
   if (!boot || typeof boot !== 'object') return;
 
-  const PATCH_VERSION = boot.version || '1.4.1';
+  const PATCH_VERSION = boot.version || '1.4.2';
+  const BUNDLE_BOOT_SEQ = (window.__ag_bundle_boot_seq = (Number(window.__ag_bundle_boot_seq) || 0) + 1);
   const ENABLED = boot.enabled !== false;
   const CSS_TEXT = boot.cssText || '';
   const CUSTOM_CSS_TEXT = boot.customCss || '';

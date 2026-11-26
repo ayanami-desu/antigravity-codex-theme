@@ -15,7 +15,7 @@ export const CORE_DIR = path.join(ROOT_DIR, 'core');
 export const STYLES_DIR = path.join(CORE_DIR, 'styles');
 export const RUNTIME_DIR = path.join(CORE_DIR, 'runtime');
 export const USER_DIR = path.join(ROOT_DIR, 'user');
-export const BASE_VERSION = '1.4.1';
+export const BASE_VERSION = '1.4.2';
 
 export function parseDaemonCliArgs(argv = process.argv.slice(2)) {
   const hasFlag = (f) => argv.some((a) => a === f || a.startsWith(f + '='));

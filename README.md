@@ -14,7 +14,7 @@
 </p>
 
 <p>
-  不修改安装包，通过本地 CDP 实时注入，覆盖 36 个独立模块与 77 项单元测试。<br>
+  不修改安装包，通过本地 CDP 实时注入，覆盖 36 个独立模块与 81 项单元测试。<br>
   支持 <code>--only</code> 按需安装、设置面板内一键检查更新与 <code>user/</code> 个人配置热重载。
 </p>
 
@@ -23,12 +23,12 @@
   <img src="https://img.shields.io/static/v1?label=Antigravity&message=2.30.x%20~%202.35.2%2B&color=2B7FFF&labelColor=363636" alt="Antigravity 2.30.x ~ 2.35.2+">
   <img src="https://img.shields.io/static/v1?label=Node.js&message=%3E%3D%2022.13.0&color=339933&labelColor=363636&logo=nodedotjs&logoColor=white" alt="Node.js >= 22.13.0">
   <img src="https://img.shields.io/static/v1?label=platform&message=macOS%20%C2%B7%20Windows%20%C2%B7%20Linux&color=4B5563&labelColor=363636" alt="macOS · Windows · Linux">
-  <img src="https://img.shields.io/static/v1?label=version&message=v1.4.1&color=2B7FFF&labelColor=363636" alt="version v1.4.1">
+  <img src="https://img.shields.io/static/v1?label=version&message=v1.4.2&color=2B7FFF&labelColor=363636" alt="version v1.4.2">
   <a href="LICENSE"><img src="https://img.shields.io/static/v1?label=license&message=MIT&color=10B981&labelColor=363636" alt="MIT License"></a>
 </p>
 
 <p>
-  <a href="#命令行安装"><img src="https://img.shields.io/static/v1?label=CLI%20INSTALL&message=v1.4.1&color=2B7FFF&style=for-the-badge&labelColor=181818&logo=gnubash&logoColor=white" alt="CLI Install"></a>
+  <a href="#命令行安装"><img src="https://img.shields.io/static/v1?label=CLI%20INSTALL&message=v1.4.2&color=2B7FFF&style=for-the-badge&labelColor=181818&logo=gnubash&logoColor=white" alt="CLI Install"></a>
   <a href="#ai-一键安装"><img src="https://img.shields.io/static/v1?label=AI%20ONE-CLICK&message=SKILL.md&color=0D9488&style=for-the-badge&labelColor=181818&logo=googlegemini&logoColor=white" alt="AI One-Click Install"></a>
   <a href="#按需安装"><img src="https://img.shields.io/static/v1?label=SELECTIVE%20INSTALL&message=--only&color=6366F1&style=for-the-badge&labelColor=181818&logo=codesandbox&logoColor=white" alt="Selective Install"></a>
 </p>
@@ -113,7 +113,7 @@ node install.mjs install --only i18n,metrics
 | `node --disable-warning=ExperimentalWarning install.mjs doctor` | 检查 Node 版本、CDP 状态、`core/manifest.json` 哈希及页面挂载状态 |
 | `node --disable-warning=ExperimentalWarning install.mjs verify [--safe-mode]` | 单次注入并校验；`--safe-mode` 跳过 `user/` 自定义脚本以便排障 |
 | `node install.mjs rollback` / `uninstall` | 回滚至上一份 `core/` 备份 / 停止服务并还原英文界面与原生样式 |
-| `npm run check` / `npm test` | 校验全部 `.mjs` 与拼接后的前端脚本语法，运行 77 项 `node:test` 单元测试 |
+| `npm run check` / `npm test` | 校验全部 `.mjs` 与拼接后的前端脚本语法，运行 81 项 `node:test` 单元测试 |
 
 </details>
 
@@ -124,7 +124,7 @@ node install.mjs install --only i18n,metrics
 在 Antigravity 原生设置弹窗（`内置浏览器` 下方）嵌入 **Codex 主题** 页签，日常切换无需手改 JSON：
 
 - **统一可视化控制**：分组管理核心开关、6×6 侧栏额度样式、自定义字体下拉、输入预测二级级联模型选择器、`sshHosts` 主机标签与状态栏偏好，修改实时写入 `user/config.json` 并热重载；关闭汉化后设置页同步切回英文。
-- **手动刷新与面板内直更新**：标题旁提供手动刷新（`↻`），底部 **版本与更新** 卡片支持检查 Release / `main` 差异并一键升级，自动备份 `core.prev/` 并保留 `user/`，无需重启应用。
+- **手动刷新与面板内原地热更新**：标题旁提供手动刷新（`↻`），底部 **版本与更新** 卡片支持检查 Release / `main` 差异并一键升级，自动备份 `core.prev/`、保留 `user/` 并原地原子重启后台服务（兼容 macOS LaunchAgent / Linux systemd / Windows 计划任务，热重载自动收敛状态），无需重启应用。
 
 ![原生嵌入式 Codex 主题设置面板与二级模型选择器](assets/settings-panel.png)
 
@@ -219,7 +219,7 @@ node install.mjs install --only i18n,metrics
 </details>
 
 <details>
-<summary>展开：源码模块结构（core/ 36 模块与 77 项单元测试）与本地构建</summary>
+<summary>展开：源码模块结构（core/ 36 模块与 81 项单元测试）与本地构建</summary>
 
 | 定制方向 | 对应文件 |
 | :--- | :--- |
@@ -240,7 +240,7 @@ node install.mjs build-manifest && npm run check && npm test && node install.mjs
 antigravity-codex-theme/
 ├── assets/         # README 展示图
 ├── core/           # daemon/ · runtime/ · styles/ · installer/ · daemon.mjs · shared.mjs · i18n.json · manifest.json
-├── tests/          # 77 项 node:test 单元测试
+├── tests/          # 81 项 node:test 单元测试
 ├── user/           # 个人配置与热重载目录
 ├── install.mjs     # 安装、更新、重启与运维 CLI
 ├── SKILL.md        # AI Agent 操作指南
@@ -270,4 +270,4 @@ antigravity-codex-theme/
 
 ## English Overview
 
-`antigravity-codex-theme` brings Codex light & dark themes, custom local fonts (with pure-Node SFNT auto-discovery for global or split UI / Chat / Code scopes), Ink 5h/7d model quota display (independent toggles for panel footer and sidebar block, 6×6 mix-and-match styles, instant live refresh on open/focus/reset, passive native-usage sync & click-to-refresh), Chinese UI + Electron native right-click context menu localization (`2,000+` in-place `WeakMap` entries with project/branch/group name guards), an embedded native **Settings → Codex Theme** panel with live self-updater, and multi-pane live session telemetry (dynamic width-adaptive wrapping for both `compact` and `detailed` modes, concurrent split-screen multi-conversation tracking, Side Question panes, opt-in read-only SSH Remote, and opt-in Ghost Text prompt suggestions) to Google Antigravity (`2.30.x` – `2.35.2+`) without touching the application bundle. Built as 36 modules with 77 `node:test` unit tests (Node.js `>= 22.13.0`, macOS / Windows / Linux, MIT License).
+`antigravity-codex-theme` brings Codex light & dark themes, custom local fonts (with pure-Node SFNT auto-discovery for global or split UI / Chat / Code scopes), Ink 5h/7d model quota display (independent toggles for panel footer and sidebar block, 6×6 mix-and-match styles, instant live refresh on open/focus/reset, passive native-usage sync & click-to-refresh), Chinese UI + Electron native right-click context menu localization (`2,000+` in-place `WeakMap` entries with project/branch/group name guards), an embedded native **Settings → Codex Theme** panel with live self-updater, and multi-pane live session telemetry (dynamic width-adaptive wrapping for both `compact` and `detailed` modes, concurrent split-screen multi-conversation tracking, Side Question panes, opt-in read-only SSH Remote, and opt-in Ghost Text prompt suggestions) to Google Antigravity (`2.30.x` – `2.35.2+`) without touching the application bundle. Built as 36 modules with 81 `node:test` unit tests (Node.js `>= 22.13.0`, macOS / Windows / Linux, MIT License).

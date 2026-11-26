@@ -159,8 +159,6 @@ async function runInstall() {
     process.exit(1);
   }
 
-  buildManifest(__dirname);
-
   const srcCore = path.join(__dirname, 'core');
   const srcUser = path.join(__dirname, 'user');
   const targetCore = path.join(targetDir, 'core');
@@ -168,8 +166,15 @@ async function runInstall() {
   const backupsDir = path.join(targetDir, 'backups');
   const targetUser = path.join(targetDir, 'user');
 
+  const isInPlaceInstall = path.resolve(__dirname) === targetDir;
+  const fromUpdater = hasFlag('--from-updater') || process.env.AG_FROM_DAEMON_UPDATER === '1';
+  // Never clobber a SHA-256 verified manifest.json during in-place self-updates
+  if (!isInPlaceInstall || (!fromUpdater && !fs.existsSync(path.join(srcCore, 'manifest.json')))) {
+    buildManifest(__dirname);
+  }
+
   let backupCreated = null;
-  if (path.resolve(__dirname) !== targetDir) {
+  if (!isInPlaceInstall) {
     fs.mkdirSync(targetDir, { recursive: true });
 
     const srcManifestPath = path.join(srcCore, 'manifest.json');
@@ -331,9 +336,11 @@ async function runInstall() {
 
   const serviceInfo = registerSystemService(targetDir, wrapperDaemon);
 
-  spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', realDaemon, '--once'], {
-    stdio: 'inherit'
-  });
+  if (!serviceInfo?.restartedInPlace) {
+    spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', realDaemon, '--once'], {
+      stdio: 'inherit'
+    });
+  }
 
   const postEnv = await detectEnvironment(currentCfg.channel);
   const live = await inspectLiveWindow(postEnv);

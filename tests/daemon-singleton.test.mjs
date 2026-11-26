@@ -12,7 +12,10 @@ import {
   inspectDaemonPidStatus,
   terminateDaemonPids
 } from '../core/shared.mjs';
-import { stopRunningDaemonProcesses } from '../core/installer/service.mjs';
+import {
+  isRunningInsideManagedService,
+  stopRunningDaemonProcesses
+} from '../core/installer/service.mjs';
 import { acquireDaemonPidLock, createCdpManager } from '../core/daemon/cdp-bridge.mjs';
 
 test('isDaemonCommandLine matches cross-platform daemon commands and rejects non-daemon commands', () => {
@@ -474,4 +477,129 @@ test('service.mjs stops active services before process sweeping on install, rest
       uninstallBody.lastIndexOf('stopRunningDaemonProcesses()') > uninstallBody.indexOf("'/Delete'"),
     'uninstallSystemService must disable/delete OS services before final process sweep'
   );
+
+  // Self-update safety invariants (Issues #14 & #15):
+  // LaunchAgent / systemd units must not tear down child installer processes during self-updates,
+  // and registerSystemService must restart in place instead of calling bootout/stop when invoked from the daemon.
+  assert.match(regBody, /<key>AbandonProcessGroup<\/key>\s*<true\/>/, 'macOS LaunchAgent plist must set AbandonProcessGroup=true');
+  assert.match(regBody, /<key>ThrottleInterval<\/key>\s*<integer>2<\/integer>/, 'macOS LaunchAgent plist must set short ThrottleInterval');
+  assert.match(regBody, /KillMode=process/, 'Linux systemd unit must set KillMode=process');
+  assert.match(
+    regBody,
+    /if \(!fromManagedService\)\s*\{\s*stopActiveSystemService\(\);/,
+    'registerSystemService must skip stopActiveSystemService() when invoked from the managed daemon'
+  );
+  assert.match(regBody, /kickRes = spawnSync\('launchctl', \['kickstart', '-k'/, 'macOS self-update must check kickstart -k exit status');
+  assert.match(regBody, /restartRes = spawnSync\('systemctl', \['--user', 'restart', '--no-block'/, 'Linux self-update must check systemctl restart exit status and fallback on failure');
+  assert.match(regBody, /if \(scheduledTaskStarted\)[\s\S]*findRunningDaemonPids/, 'Windows schtasks /Run must confirm a daemon PID appeared before skipping detached spawn fallback');
+});
+
+test('inspectDaemonPidStatus with requireCommandLineMatch refuses to guess generic Windows node.exe as daemon', () => {
+  const statusNoCmd = inspectDaemonPidStatus(8888, ['antigravity-codex-daemon.mjs'], {
+    platform: 'win32',
+    excludePids: [9999],
+    isAliveImpl: () => true,
+    requireCommandLineMatch: true,
+    spawnSyncImpl: (bin) => {
+      if (bin === 'powershell') {
+        return { status: 0, stdout: JSON.stringify({ Name: 'node.exe', CommandLine: '' }) };
+      }
+      return { status: 0, stdout: '"node.exe","8888","Console","1","20,000 K"\r\n' };
+    }
+  });
+  assert.equal(statusNoCmd, 'unknown', 'Must not falsely treat an opaque Windows node.exe parent as daemon');
+
+  const statusPsFail = inspectDaemonPidStatus(8888, ['antigravity-codex-daemon.mjs'], {
+    platform: 'win32',
+    excludePids: [9999],
+    isAliveImpl: () => true,
+    requireCommandLineMatch: true,
+    spawnSyncImpl: (bin) => {
+      if (bin === 'powershell' || bin === 'pwsh') {
+        return { status: 1, stdout: '' };
+      }
+      return { status: 0, stdout: '"node.exe","8888","Console","1","20,000 K"\r\n' };
+    }
+  });
+  assert.equal(statusPsFail, 'unknown', 'Must not fall back to tasklist node.exe heuristic when requireCommandLineMatch is true');
+});
+
+test('isRunningInsideManagedService detects updater flag, env, LaunchAgent, systemd cgroup, and daemon ppid', () => {
+  const noDaemon = () => 'other';
+
+  assert.equal(
+    isRunningInsideManagedService({
+      platform: 'darwin',
+      env: {},
+      argv: ['node', 'install.mjs', 'install'],
+      ppid: 1234,
+      inspectDaemonPidStatusImpl: noDaemon
+    }),
+    false,
+    'Normal interactive terminal invocation must not be treated as inside managed service'
+  );
+
+  assert.equal(
+    isRunningInsideManagedService({
+      platform: 'darwin',
+      env: {},
+      argv: ['node', 'install.mjs', 'install', '--from-updater'],
+      ppid: 1234,
+      inspectDaemonPidStatusImpl: noDaemon
+    }),
+    true
+  );
+
+  assert.equal(
+    isRunningInsideManagedService({
+      platform: 'win32',
+      env: { AG_FROM_DAEMON_UPDATER: '1' },
+      argv: ['node', 'install.mjs', 'install'],
+      ppid: 1234,
+      inspectDaemonPidStatusImpl: noDaemon
+    }),
+    true
+  );
+
+  assert.equal(
+    isRunningInsideManagedService({
+      platform: 'darwin',
+      env: { XPC_SERVICE_NAME: 'com.antigravity.codex-theme' },
+      argv: ['node', 'install.mjs', 'install'],
+      ppid: 1234,
+      inspectDaemonPidStatusImpl: noDaemon
+    }),
+    true,
+    'macOS LaunchAgent child spawned by older updater without --from-updater must still be detected via XPC_SERVICE_NAME'
+  );
+
+  assert.equal(
+    isRunningInsideManagedService({
+      platform: 'linux',
+      env: {},
+      argv: ['node', 'install.mjs', 'install'],
+      ppid: 1234,
+      readFileSyncImpl: () => '0::/user.slice/user-1000.slice/user@1000.service/app.slice/antigravity-codex-theme.service\n',
+      inspectDaemonPidStatusImpl: noDaemon
+    }),
+    true,
+    'Linux systemd cgroup child spawned by older updater must be detected via /proc/self/cgroup'
+  );
+
+  let capturedOpts = null;
+  assert.equal(
+    isRunningInsideManagedService({
+      platform: 'win32',
+      env: {},
+      argv: ['node', 'install.mjs', 'install'],
+      ppid: 4321,
+      inspectDaemonPidStatusImpl: (pid, _extra, opts) => {
+        capturedOpts = opts;
+        return pid === 4321 ? 'daemon' : 'other';
+      }
+    }),
+    true,
+    'Windows child spawned by older updater without --from-updater must be detected via daemon ppid'
+  );
+  assert.equal(capturedOpts?.requireCommandLineMatch, true, 'ppid detection must enforce strict command-line matching');
 });

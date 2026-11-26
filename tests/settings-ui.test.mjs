@@ -673,7 +673,162 @@ test('updater validates semver/paths, verifies SHA-256, backs up core/, and pres
     assert.equal(staleCdnChk.ok, true);
     assert.equal(staleCdnChk.status, 'up_to_date');
     assert.equal(staleCdnChk.canSyncMain, false);
+
+    // If package.json fetch fails transiently during applyPluginUpdate, local package.json version still syncs to remoteManifest.version
+    const remoteV123 = {
+      name: 'antigravity-codex-theme',
+      version: '1.2.3',
+      files: { 'daemon.mjs': { sha256: newHash, bytes: newContent.length } }
+    };
+    const fallbackPkgApply = await applyPluginUpdate({
+      targetDir: tmpDir,
+      ref: 'v1.2.3',
+      scheduleRestart: false,
+      fetchJson: async () => remoteV123,
+      fetchBuffer: async (url) => {
+        if (url.endsWith('core/daemon.mjs')) return newContent;
+        throw new Error('simulated transient error for top-level files');
+      }
+    });
+    assert.equal(fallbackPkgApply.ok, true);
+    assert.equal(
+      JSON.parse(fs.readFileSync(path.join(tmpDir, 'package.json'), 'utf8')).version,
+      '1.2.3',
+      'Local package.json version must stay synced with remoteManifest.version to prevent manifest downgrade loops'
+    );
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
+});
+
+test('75-settings-ui clears stale status=applied update cache after hot-reloading to updated bundle (Issue #14)', () => {
+  const code = ['00-head.js', '75-settings-ui.js', '90-tail.js']
+    .map((f) => fs.readFileSync(path.join(ROOT_DIR, 'core', 'runtime', f), 'utf8'))
+    .join('\n');
+
+  const runSettingsMount = (bootVersion, initialCache, existingBootSeq = 0) => {
+    const headEl = { appendChild() {} };
+    const fakeDoc = {
+      head: headEl,
+      body: {
+        nodeType: 1,
+        tagName: 'BODY',
+        classList: { contains: () => false },
+        style: { removeProperty() {} },
+        closest: () => null,
+        querySelectorAll: () => []
+      },
+      hidden: false,
+      documentElement: { style: { removeProperty() {} }, setAttribute() {}, getAttribute: () => null, removeAttribute() {} },
+      getElementById: () => null,
+      createElement: (tag) => ({
+        tagName: tag.toUpperCase(),
+        id: '',
+        textContent: '',
+        style: {},
+        setAttribute() {},
+        removeAttribute() {},
+        remove() {}
+      }),
+      getElementsByTagName: (t) => (t === 'head' ? [headEl] : []),
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      addEventListener() {},
+      removeEventListener() {}
+    };
+
+    const sandbox = {
+      location: { pathname: '/', href: 'http://127.0.0.1/', search: '' },
+      navigator: { platform: 'MacIntel', onLine: true },
+      history: { pushState() {}, replaceState() {} },
+      addEventListener() {},
+      removeEventListener() {},
+      setInterval: () => 1,
+      clearInterval() {},
+      setTimeout: () => 1,
+      clearTimeout() {},
+      requestAnimationFrame: () => 1,
+      document: fakeDoc,
+      MutationObserver: class { observe() {} disconnect() {} },
+      __ag_bundle_boot_seq: existingBootSeq,
+      __ag_settings_update_cache: initialCache,
+      __AG_BOOT_PAYLOAD__: {
+        version: bootVersion,
+        platform: 'darwin',
+        enabled: true,
+        cssText: '',
+        customCss: '',
+        themeVars: {},
+        i18nDict: {},
+        modules: { theme: false, i18n: false, metrics: false, promptSuggestions: false, deadlockHealer: false, zoomShortcuts: false },
+        selectors: {},
+        userConfig: { modules: { theme: false, i18n: false } },
+        customJs: ''
+      }
+    };
+    sandbox.window = sandbox;
+    sandbox.top = sandbox;
+    vm.createContext(sandbox);
+    vm.runInContext(`const __AG_BOOT_PAYLOAD__ = globalThis.__AG_BOOT_PAYLOAD__;\n${code}`, sandbox);
+    for (const fn of sandbox.__ag_cleanup_fns || []) fn();
+    return sandbox.__ag_settings_update_cache;
+  };
+
+  // Case 1: Hot-reloaded to new bundle (v1.4.0 -> v1.4.2): stale "applied" must transition to "up_to_date"
+  const afterReload = runSettingsMount('1.4.2-stable-new', {
+    phase: 'applied',
+    status: 'applied',
+    currentVersion: '1.4.2',
+    latestVersion: '1.4.2',
+    appliedFromPatchVersion: '1.4.0-stable-old',
+    appliedAtBootSeq: 1
+  }, 1);
+  assert.equal(afterReload.status, 'up_to_date');
+  assert.equal(afterReload.phase, 'done');
+  assert.equal(afterReload.currentVersion, '1.4.2');
+
+  // Case 2: Hot-reloaded from older 1.4.0 bundle without appliedAtBootSeq/appliedFromPatchVersion: matching live semver still resolves
+  const afterLegacyReload = runSettingsMount('1.4.2-stable-new', {
+    phase: 'applied',
+    status: 'applied',
+    currentVersion: '1.4.2',
+    latestVersion: '1.4.2'
+  });
+  assert.equal(afterLegacyReload.status, 'up_to_date');
+  assert.equal(afterLegacyReload.phase, 'done');
+
+  // Case 3: Still on old bundle (hot-reload hasn't arrived yet): keep status=applied
+  const beforeReload = runSettingsMount('1.4.0-stable-old', {
+    phase: 'applied',
+    status: 'applied',
+    currentVersion: '1.4.2',
+    latestVersion: '1.4.2',
+    appliedFromPatchVersion: '1.4.0-stable-old',
+    appliedAtBootSeq: 2
+  }, 1);
+  assert.equal(beforeReload.status, 'applied');
+  assert.equal(beforeReload.phase, 'applied');
+
+  // Case 4: Same-version main_diff sync BEFORE hot-reload must NOT prematurely flip to up_to_date
+  const sameVerBeforeReload = runSettingsMount('1.4.2-stable-same', {
+    phase: 'applied',
+    status: 'applied',
+    currentVersion: '1.4.2',
+    latestVersion: '1.4.2',
+    appliedFromPatchVersion: '1.4.2-stable-same',
+    appliedAtBootSeq: 3
+  }, 2);
+  assert.equal(sameVerBeforeReload.status, 'applied', 'Same-version main_diff must wait until a newer bundle actually injects');
+
+  // Case 5: Daemon-only same-version main_diff AFTER re-injection (identical PATCH_VERSION, higher boot seq) MUST resolve to up_to_date
+  const daemonOnlyAfterReload = runSettingsMount('1.4.2-stable-same', {
+    phase: 'applied',
+    status: 'applied',
+    currentVersion: '1.4.2',
+    latestVersion: '1.4.2',
+    appliedFromPatchVersion: '1.4.2-stable-same',
+    appliedAtBootSeq: 3
+  }, 3);
+  assert.equal(daemonOnlyAfterReload.status, 'up_to_date', 'Daemon-only re-injection increments boot seq and must resolve applied state');
+  assert.equal(daemonOnlyAfterReload.phase, 'done');
 });
