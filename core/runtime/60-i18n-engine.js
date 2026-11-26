@@ -390,6 +390,15 @@
 
     function resolveContextualDictTranslation(trimmed, contextEl, baseVal) {
       if (!contextEl || !contextEl.closest) return baseVal;
+      if (
+        baseVal !== undefined &&
+        !/\s/.test(trimmed) &&
+        contextEl.closest(
+          '[data-testid="branch-pill-trigger"], [data-testid="project-branch-picker"], [data-testid="project-selector-trigger"], [data-testid="workspace-name"], [data-testid="sidebar-project-title"]'
+        )
+      ) {
+        return null;
+      }
       if (trimmed === 'Plan' && baseVal === '计划' && contextEl.closest('[role="dialog"]')) {
         return '方案套餐';
       }
@@ -721,16 +730,17 @@
     // 拦截翻译 Electron 原生右键菜单（window.electronNative.showContextMenu 传入前由 ogb/mgb .map 构造的菜单描述符）
     const origArrayMap = window.__ag_orig_array_map || Array.prototype.map;
     window.__ag_orig_array_map = origArrayMap;
+    const hasOwn = Object.prototype.hasOwnProperty;
     const SKIP_NATIVE_MENU_ID_RE = /^(?:project-(?!new$|remove$)|group-(?!new$|remove$)|message-timestamp$)/;
 
     function isNativeContextMenuEntry(item) {
-      if (!item || typeof item !== 'object') return false;
+      if (!item || typeof item !== 'object' || item.constructor !== Object) return false;
       if (item.type === 'separator') return true;
       return (
         (typeof item.label === 'string' || item.label === undefined) &&
-        'accelerator' in item &&
-        (('checked' in item && 'disabled' in item && !('onClick' in item)) ||
-          ('click' in item && 'enabled' in item && typeof item.click === 'function'))
+        hasOwn.call(item, 'accelerator') &&
+        ((hasOwn.call(item, 'checked') && hasOwn.call(item, 'disabled') && !('onClick' in item)) ||
+          (hasOwn.call(item, 'click') && hasOwn.call(item, 'enabled') && typeof item.click === 'function'))
       );
     }
 
@@ -745,17 +755,20 @@
 
     const patchedArrayMap = function map(callback, thisArg) {
       const res = origArrayMap.call(this, callback, thisArg);
+      if (!Array.isArray(res)) return res;
       const len = res.length;
       if (len === 0 || len > 64) return res;
       let probe = null;
       for (let i = 0; i < len; i++) {
         const cand = res[i];
-        if (!cand || typeof cand !== 'object') return res;
+        if (!cand || typeof cand !== 'object' || cand.constructor !== Object) return res;
         if (cand.type === 'separator') continue;
         probe = cand;
         break;
       }
-      if (!probe || !('accelerator' in probe) || !isNativeContextMenuEntry(probe)) return res;
+      if (!probe || !hasOwn.call(probe, 'accelerator') || !isNativeContextMenuEntry(probe)) {
+        return res;
+      }
       for (let i = 0; i < len; i++) {
         const entry = res[i];
         if (entry && isNativeContextMenuEntry(entry) && typeof entry.label === 'string' && entry.label) {

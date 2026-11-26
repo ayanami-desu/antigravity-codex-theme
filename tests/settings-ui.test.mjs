@@ -288,12 +288,12 @@ test('60-i18n-engine handles Antigravity 2.35.1 sentence-case labels, Thinking f
     .map((f) => fs.readFileSync(path.join(ROOT_DIR, 'core', 'runtime', f), 'utf8'))
     .join('\n');
 
-  const mkEl = (attrs = {}) => {
+  const mkEl = (attrs = {}, closestHit = null) => {
     const map = new Map(Object.entries(attrs));
     return {
       nodeType: 1,
       tagName: 'BUTTON',
-      closest: () => null,
+      closest: (sel) => (closestHit && String(sel).includes(closestHit) ? {} : null),
       matches: () => false,
       getAttribute: (k) => (map.has(k) ? map.get(k) : null),
       setAttribute: (k, v) => map.set(k, String(v)),
@@ -323,6 +323,11 @@ test('60-i18n-engine handles Antigravity 2.35.1 sentence-case labels, Thinking f
     nodeValue: s,
     parentElement: mkEl()
   }));
+  textNodes.push(
+    { nodeType: 3, nodeValue: 'Active', parentElement: mkEl({}, 'branch-pill-trigger') },
+    { nodeType: 3, nodeValue: 'Commit', parentElement: mkEl({}, 'project-selector-trigger') },
+    { nodeType: 3, nodeValue: 'Select branch', parentElement: mkEl({}, 'branch-pill-trigger') }
+  );
 
   const attrEls = [
     mkEl({ 'aria-label': 'Model, current: Gemini 4 Neon Extra High, Model cannot be changed while the agent is running' }),
@@ -523,6 +528,38 @@ test('60-i18n-engine handles Antigravity 2.35.1 sentence-case labels, Thinking f
   assert.equal(nativeMenuResult[8].label, '归档');
   assert.equal(nativeMenuResult[9].label, '删除');
   assert.equal(nativeMenuResult[10].label, '右侧边栏（默认）');
+
+  // Verify branch/project pills preserve single-word Git branch/project names while translating multi-word placeholders
+  assert.equal(textNodes[14].nodeValue, 'Active', 'Single-word Git branch name must not be mistranslated');
+  assert.equal(textNodes[15].nodeValue, 'Commit', 'Single-word project name must not be mistranslated');
+  assert.equal(textNodes[16].nodeValue, '选择分支', 'Multi-word branch placeholder should still translate');
+
+  // Verify patchedArrayMap fast-exits on class instances & custom Symbol.species non-Array results
+  const edgeCases = vm.runInContext(
+    `(() => {
+      class CustomModel {
+        constructor() {
+          this.label = 'Rename';
+          this.accelerator = '';
+          this.checked = false;
+          this.disabled = false;
+        }
+      }
+      const clsMapped = [1].map(() => new CustomModel());
+      class NonArraySpecies extends Array {
+        static get [Symbol.species]() {
+          return function () { return { custom: true }; };
+        }
+      }
+      const sp = new NonArraySpecies(1);
+      sp[0] = { label: 'Rename', accelerator: '', checked: false, disabled: false };
+      const spMapped = sp.map((x) => x);
+      return { clsLabel: clsMapped[0].label, spCustom: spMapped.custom === true };
+    })()`,
+    sandbox
+  );
+  assert.equal(edgeCases.clsLabel, 'Rename', 'Class instances must bypass native menu translation');
+  assert.equal(edgeCases.spCustom, true, 'Custom Symbol.species returning non-Array must not throw');
 });
 
 test('updater validates semver/paths, verifies SHA-256, backs up core/, and preserves user/', async () => {

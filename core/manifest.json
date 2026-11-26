@@ -97,8 +97,8 @@
       "bytes": 58328
     },
     "runtime/60-i18n-engine.js": {
-      "sha256": "34237a5070afbfaa6ab4a8a9cb271dcf0cc3e7b23380abca102edbe4cb8797d3",
-      "bytes": 48089
+      "sha256": "ca2b2420b7eace33640f046a13370e0312d1dfc25e77873b2ae1026547f7adc2",
+      "bytes": 48679
     },
     "runtime/70-prompt-suggestions.js": {
       "sha256": "ec3967100ca7f28c1e59073e8294f80bc432dc45414469946197a6a3e344e545",
