@@ -125,7 +125,7 @@ test('Repository contains zero upstream branding, removed warm presets, or Drive
   const allFiles = walkAllFiles(ROOT_DIR);
   const violations = [];
   for (const full of allFiles) {
-    const rel = path.relative(ROOT_DIR, full);
+    const rel = path.relative(ROOT_DIR, full).replace(/\\/g, '/');
     if (rel === 'tests/manifest-hygiene.test.mjs' || rel.startsWith('assets/')) continue;
     const text = fs.readFileSync(full, 'utf8');
     // Allow explicit upstream attribution only inside README.md while keeping code/configs/scripts clean
