@@ -7,6 +7,9 @@
     config: boot.userConfig && typeof boot.userConfig === 'object' ? boot.userConfig : {},
     modules: Object.assign({}, MODULES),
     telemetryLayout: boot.telemetryLayout || 'compact',
+    quotaStyle: boot.quotaStyle || 'segments',
+    quotaOtherStyle: boot.quotaOtherStyle || 'lines',
+    fonts: boot.fonts && typeof boot.fonts === 'object' ? Object.assign({}, boot.fonts) : { mode: 'global', global: '', ui: '', chat: '', code: '' },
     themeVars: Object.assign({}, THEME_VARS),
     dict: typeof DICT !== 'undefined' ? DICT : {},
     get metrics() {
@@ -60,6 +63,9 @@
     }
     if (typeof checkRouteAndMountMetrics === 'function') {
       checkRouteAndMountMetrics();
+    }
+    if (typeof mountQuotaUi === 'function') {
+      mountQuotaUi();
     }
     if (typeof mountPromptSuggestions === 'function') {
       mountPromptSuggestions();

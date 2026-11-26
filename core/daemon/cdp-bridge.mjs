@@ -16,7 +16,7 @@ import {
   getDaemonPidCandidateDirs,
   terminateDaemonPids
 } from '../shared.mjs';
-import { ROOT_DIR } from './paths.mjs';
+import { ROOT_DIR, scanUserInstalledFonts } from './paths.mjs';
 import { createCdpRelaunchController } from './cdp-relaunch.mjs';
 
 export const ALLOWED_EXTERNAL_LINKS = Object.freeze({
@@ -563,6 +563,9 @@ export function createCdpManager({
                   if (/^[0-9a-f-]{36}$/i.test(s) && !out.includes(s)) out.push(s);
                 };
                 if (window.__ag_watched_cascade_id) add(window.__ag_watched_cascade_id);
+                document.querySelectorAll('[data-testid="conversation-view"]').forEach((el) => {
+                  add(el.getAttribute('data-cascade-id') || el.getAttribute('data-quotable-pane-cascade-id'));
+                });
                 const m = window.location.pathname.match(/\\/c\\/([0-9a-f-]{36})/i);
                 if (m) {
                   add(m[1]);
@@ -933,6 +936,10 @@ export function createCdpManager({
                     modelsInfo = await promptSuggester.listModels({ force: refreshModels });
                   } catch {}
                 }
+                let installedFonts = null;
+                try {
+                  installedFonts = scanUserInstalledFonts({ force: forceReload });
+                } catch {}
                 const out = {
                   ok: true,
                   version: cachedPatchVersion,
@@ -940,12 +947,16 @@ export function createCdpManager({
                     enabled: activeConfig.enabled,
                     telemetryLayout: activeConfig.telemetryLayout,
                     telemetryCacheMode: activeConfig.telemetryCacheMode,
+                    quotaStyle: activeConfig.quotaStyle,
+                    quotaOtherStyle: activeConfig.quotaOtherStyle,
+                    fonts: Object.assign({ mode: 'global', global: '', ui: '', chat: '', code: '' }, activeConfig.fonts || {}),
                     promptSuggestionModel: activeConfig.promptSuggestionModel,
                     sshHosts: Array.isArray(activeConfig.sshHosts) ? activeConfig.sshHosts : [],
                     modules: Object.assign({}, activeConfig.modules)
                   },
                   agyStatus,
-                  modelsInfo
+                  modelsInfo,
+                  installedFonts
                 };
                 if (ws.readyState === WebSocket.OPEN) {
                   const payloadJson = JSON.stringify(out)
@@ -1010,6 +1021,9 @@ export function createCdpManager({
                     enabled: activeConfig.enabled,
                     telemetryLayout: activeConfig.telemetryLayout,
                     telemetryCacheMode: activeConfig.telemetryCacheMode,
+                    quotaStyle: activeConfig.quotaStyle,
+                    quotaOtherStyle: activeConfig.quotaOtherStyle,
+                    fonts: Object.assign({ mode: 'global', global: '', ui: '', chat: '', code: '' }, activeConfig.fonts || {}),
                     promptSuggestionModel: activeConfig.promptSuggestionModel,
                     sshHosts: Array.isArray(activeConfig.sshHosts) ? activeConfig.sshHosts : [],
                     modules: Object.assign({}, activeConfig.modules)

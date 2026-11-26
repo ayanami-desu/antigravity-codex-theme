@@ -240,6 +240,23 @@ async function runInstall() {
   }
   if (!currentCfg.telemetryLayout) currentCfg.telemetryLayout = 'compact';
   if (!currentCfg.telemetryCacheMode) currentCfg.telemetryCacheMode = 'session';
+  if (!['segments', 'bar', 'rings', 'gauge', 'dots', 'compact'].includes(currentCfg.quotaStyle)) {
+    currentCfg.quotaStyle = 'segments';
+  }
+  if (!['lines', 'text', 'segments', 'rings', 'rows', 'hidden'].includes(currentCfg.quotaOtherStyle)) {
+    currentCfg.quotaOtherStyle = 'lines';
+  }
+  if (!currentCfg.fonts || typeof currentCfg.fonts !== 'object') {
+    currentCfg.fonts = { mode: 'global', global: '', ui: '', chat: '', code: '' };
+  } else {
+    currentCfg.fonts = {
+      mode: currentCfg.fonts.mode === 'split' ? 'split' : 'global',
+      global: typeof currentCfg.fonts.global === 'string' ? currentCfg.fonts.global : '',
+      ui: typeof currentCfg.fonts.ui === 'string' ? currentCfg.fonts.ui : '',
+      chat: typeof currentCfg.fonts.chat === 'string' ? currentCfg.fonts.chat : '',
+      code: typeof currentCfg.fonts.code === 'string' ? currentCfg.fonts.code : ''
+    };
+  }
   if (!currentCfg.modules || typeof currentCfg.modules !== 'object') {
     currentCfg.modules = {};
   }
@@ -247,6 +264,8 @@ async function runInstall() {
     'theme',
     'i18n',
     'metrics',
+    'quota',
+    'quotaSidebar',
     'sshRemote',
     'promptSuggestions',
     'deadlockHealer',
@@ -275,6 +294,13 @@ async function runInstall() {
   }
   if (!fs.existsSync(path.join(targetCore, 'runtime', '50-telemetry-ui.js'))) {
     currentCfg.modules.metrics = false;
+  }
+  if (!fs.existsSync(path.join(targetCore, 'runtime', '55-quota-ui.js'))) {
+    currentCfg.modules.quota = false;
+    currentCfg.modules.quotaSidebar = false;
+  } else {
+    if (typeof currentCfg.modules.quota !== 'boolean') currentCfg.modules.quota = true;
+    if (typeof currentCfg.modules.quotaSidebar !== 'boolean') currentCfg.modules.quotaSidebar = true;
   }
   if (
     !fs.existsSync(path.join(targetCore, 'runtime', '70-prompt-suggestions.js')) ||

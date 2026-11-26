@@ -7,7 +7,8 @@
 #ag-settings-nav-wrap,
 #ag-settings-pane,
 #ag-settings-model-menu,
-#ag-settings-effort-menu {
+#ag-settings-effort-menu,
+#ag-settings-font-menu {
   --ag-s-bg: var(--background, #FFFFFF);
   --ag-s-sidebar: var(--sidebar, #FAFAFA);
   --ag-s-selected: var(--sidebar-secondary, var(--secondary, rgba(0, 0, 0, 0.06)));
@@ -35,14 +36,14 @@
   --ag-s-mono: var(--font-mono, "SF Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
 }
 
-:is(html.dark body, body.dark, body.theme-dark, body[data-agy-theme].dark) :is(#ag-settings-nav-wrap, #ag-settings-pane, #ag-settings-model-menu, #ag-settings-effort-menu) {
+:is(html.dark body, body.dark, body.theme-dark, body[data-agy-theme].dark) :is(#ag-settings-nav-wrap, #ag-settings-pane, #ag-settings-model-menu, #ag-settings-effort-menu, #ag-settings-font-menu) {
   --ag-s-switch-off: rgba(255, 255, 255, 0.22);
   --ag-s-seg-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
   --ag-s-dropdown-shadow: 0 20px 44px -6px rgba(0, 0, 0, 0.72), 0 4px 12px rgba(0, 0, 0, 0.42);
 }
 
 /* Codex Light palette — applied ONLY when Codex Theme module is enabled (html[data-ag-preset]) */
-html[data-ag-preset]:not([data-ag-theme-mode="dark"]):not(:has(> body.dark)) :is(#ag-settings-nav-wrap, #ag-settings-pane, #ag-settings-model-menu, #ag-settings-effort-menu) {
+html[data-ag-preset]:not([data-ag-theme-mode="dark"]):not(:has(> body.dark)) :is(#ag-settings-nav-wrap, #ag-settings-pane, #ag-settings-model-menu, #ag-settings-effort-menu, #ag-settings-font-menu) {
   --ag-s-bg: var(--background, #FFFFFF);
   --ag-s-sidebar: var(--sidebar, #F9F9F9);
   --ag-s-selected: var(--sidebar-secondary, #EFEFEF);
@@ -68,7 +69,7 @@ html[data-ag-preset]:not([data-ag-theme-mode="dark"]):not(:has(> body.dark)) :is
 }
 
 /* Codex Dark palette — applied ONLY when Codex Theme module is enabled */
-:is(html[data-ag-preset][data-ag-theme-mode="dark"] body, html[data-ag-preset].dark body, html[data-ag-preset] body.dark, html[data-ag-preset] body.theme-dark, html[data-ag-preset] body[data-agy-theme].dark) :is(#ag-settings-nav-wrap, #ag-settings-pane, #ag-settings-model-menu, #ag-settings-effort-menu) {
+:is(html[data-ag-preset][data-ag-theme-mode="dark"] body, html[data-ag-preset].dark body, html[data-ag-preset] body.dark, html[data-ag-preset] body.theme-dark, html[data-ag-preset] body[data-agy-theme].dark) :is(#ag-settings-nav-wrap, #ag-settings-pane, #ag-settings-model-menu, #ag-settings-effort-menu, #ag-settings-font-menu) {
   --ag-s-bg: var(--background, #181818);
   --ag-s-sidebar: var(--sidebar, #232323);
   --ag-s-selected: var(--sidebar-secondary, #353535);
@@ -187,7 +188,8 @@ html[data-ag-preset]:not([data-ag-theme-mode="dark"]):not(:has(> body.dark)) :is
 
 #ag-settings-pane *,
 #ag-settings-model-menu *,
-#ag-settings-effort-menu * {
+#ag-settings-effort-menu *,
+#ag-settings-font-menu * {
   box-sizing: border-box;
 }
 
@@ -621,6 +623,111 @@ html[data-ag-preset]:not([data-ag-theme-mode="dark"]):not(:has(> body.dark)) :is
   outline-offset: 1px;
 }
 
+/* Visual Quota Graphic Picker (inside Sidebar Quota subrow) */
+#ag-settings-pane .ag-s-qstyle-subrow {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+#ag-settings-pane .ag-s-qstyle-hdr {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+#ag-settings-pane .ag-s-qstyle-hint {
+  font-size: 11px !important;
+  color: var(--ag-s-fg-3) !important;
+}
+
+#ag-settings-pane .ag-s-qstyle-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
+  width: 100%;
+}
+
+@media (max-width: 720px) {
+  #ag-settings-pane .ag-s-qstyle-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+#ag-settings-pane .ag-s-qstyle-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 6px 7px;
+  border-radius: 8px;
+  border: 1px solid var(--ag-s-border);
+  background-color: var(--ag-s-surface) !important;
+  color: var(--ag-s-fg-2) !important;
+  font-family: var(--ag-s-font) !important;
+  font-size: 11px !important;
+  line-height: 14px !important;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
+}
+
+#ag-settings-pane .ag-s-qstyle-card:hover {
+  background-color: var(--ag-s-selected) !important;
+  color: var(--ag-s-fg) !important;
+}
+
+#ag-settings-pane .ag-s-qstyle-card[aria-pressed="true"] {
+  background-color: var(--ag-s-seg-active) !important;
+  border-color: var(--ag-s-fg) !important;
+  color: var(--ag-s-fg) !important;
+  box-shadow: var(--ag-s-seg-shadow);
+}
+
+#ag-settings-pane .ag-s-qstyle-card:focus-visible {
+  outline: 2px solid var(--ag-s-focus);
+  outline-offset: 1px;
+}
+
+#ag-settings-pane .ag-s-qstyle-prev {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 20px;
+  color: var(--ag-s-fg);
+}
+
+/* Custom Fonts Section (clean native dropdown triggers) */
+#ag-settings-pane .ag-s-link-btn {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--ag-s-fg-3) !important;
+  font-family: var(--ag-s-font) !important;
+  font-size: 12px !important;
+  line-height: 16px !important;
+  cursor: pointer;
+  transition: color 120ms ease;
+}
+
+#ag-settings-pane .ag-s-link-btn:hover {
+  color: var(--ag-s-fg) !important;
+}
+
+#ag-settings-pane .ag-s-font-trigger {
+  min-width: 136px;
+  max-width: 224px;
+}
+
+#ag-settings-pane .ag-s-font-trigger-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* SSH Hosts Chips & Inline Add Input */
 #ag-settings-pane .ag-s-chips {
   display: flex;
@@ -798,7 +905,8 @@ html[data-ag-preset]:not([data-ag-theme-mode="dark"]):not(:has(> body.dark)) :is
  * Native Popover 2-Level Cascading Model Menu (Top-Layer, Viewport-Aware)
  * ============================================================================ */
 #ag-settings-model-menu,
-#ag-settings-effort-menu {
+#ag-settings-effort-menu,
+#ag-settings-font-menu {
   padding: 6px;
   border-radius: 12px;
   background-color: var(--ag-s-card) !important;
@@ -820,9 +928,15 @@ html[data-ag-preset]:not([data-ag-theme-mode="dark"]):not(:has(> body.dark)) :is
   width: min(172px, calc(100vw - 24px));
 }
 
+#ag-settings-font-menu {
+  width: min(228px, calc(100vw - 24px));
+  max-height: min(248px, calc(100vh - 24px));
+}
+
 /* Fallback viewport-relative fixed placement when JS positions the popover */
 #ag-settings-model-menu[data-js-pos="1"],
-#ag-settings-effort-menu[data-js-pos="1"] {
+#ag-settings-effort-menu[data-js-pos="1"],
+#ag-settings-font-menu[data-js-pos="1"] {
   position: fixed;
   inset: auto;
   margin: 0;
@@ -857,7 +971,8 @@ html[data-ag-preset]:not([data-ag-theme-mode="dark"]):not(:has(> body.dark)) :is
 
 @media (prefers-reduced-motion: no-preference) {
   #ag-settings-model-menu,
-  #ag-settings-effort-menu {
+  #ag-settings-effort-menu,
+  #ag-settings-font-menu {
     opacity: 0;
     translate: 0 -4px;
     transition: opacity, translate, display, overlay;
@@ -867,7 +982,8 @@ html[data-ag-preset]:not([data-ag-theme-mode="dark"]):not(:has(> body.dark)) :is
   }
 
   #ag-settings-model-menu:popover-open,
-  #ag-settings-effort-menu:popover-open {
+  #ag-settings-effort-menu:popover-open,
+  #ag-settings-font-menu:popover-open {
     opacity: 1;
     translate: 0 0;
     transition-duration: 0.1s;

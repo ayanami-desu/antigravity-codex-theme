@@ -100,7 +100,8 @@
         'ag-settings-nav-wrap',
         'ag-settings-pane',
         'ag-settings-model-menu',
-        'ag-settings-effort-menu'
+        'ag-settings-effort-menu',
+        'ag-settings-font-menu'
       ]) {
         const el = document.getElementById(id);
         if (el) el.remove();
@@ -153,10 +154,23 @@
       let boundSidebarClick = null;
 
       const bootUserCfg = boot.userConfig && typeof boot.userConfig === 'object' ? boot.userConfig : {};
+      const normalizeLocalFonts = (raw) => {
+        const src = raw && typeof raw === 'object' ? raw : {};
+        return {
+          mode: src.mode === 'split' ? 'split' : 'global',
+          global: typeof src.global === 'string' ? src.global : '',
+          ui: typeof src.ui === 'string' ? src.ui : '',
+          chat: typeof src.chat === 'string' ? src.chat : '',
+          code: typeof src.code === 'string' ? src.code : ''
+        };
+      };
       const uiState = {
         config: {
           telemetryLayout: bootUserCfg.telemetryLayout || boot.telemetryLayout || 'compact',
           telemetryCacheMode: bootUserCfg.telemetryCacheMode || boot.telemetryCacheMode || 'session',
+          quotaStyle: bootUserCfg.quotaStyle || boot.quotaStyle || 'segments',
+          quotaOtherStyle: bootUserCfg.quotaOtherStyle || boot.quotaOtherStyle || 'lines',
+          fonts: normalizeLocalFonts(bootUserCfg.fonts || boot.fonts),
           promptSuggestionModel: bootUserCfg.promptSuggestionModel || 'gemini-3.8-flash-low',
           sshHosts: Array.isArray(bootUserCfg.sshHosts) ? bootUserCfg.sshHosts.slice() : [],
           modules: Object.assign({}, MODULES, bootUserCfg.modules || {})
@@ -173,6 +187,10 @@
           Array.isArray(window.__ag_settings_models_cache) && window.__ag_settings_models_cache.length > 0
             ? window.__ag_settings_models_cache
             : AG_SETTINGS_FALLBACK_FAMILIES,
+        installedFonts:
+          window.__ag_settings_fonts_cache && typeof window.__ag_settings_fonts_cache === 'object'
+            ? window.__ag_settings_fonts_cache
+            : { sans: [], mono: [] },
         update: (window.__ag_settings_update_cache && Object.assign({}, window.__ag_settings_update_cache)) || {
           phase: 'idle',
           status: 'idle',
@@ -214,6 +232,26 @@
             modI18nDesc: '内置 1,900+ 界面词条，原地更新不影响交互，关闭即恢复英文',
             modMetrics: '实时会话状态与用量统计',
             modMetricsDesc: '底部四态状态指示、一/二级明细面板与每轮对话尾部统计',
+            modQuota: '模型额度',
+            modQuotaDesc: '在会话统计面板底部显示当前模型池的 5h / 7d 剩余额度',
+            quotaSidebarLbl: '侧栏显示',
+            quotaSidebarDesc: '在「系统设置」上方常驻显示当前与其他模型池额度；侧栏折叠时自动隐藏',
+            quotaStyleLbl: '当前模型池',
+            quotaStyleHint: '正在使用的池子，显示具体数值与重置时间',
+            quotaOtherLbl: '其他模型池',
+            quotaOtherHint: '可与当前池样式自由组合，也可不显示',
+            qOtherLines: '标签细线',
+            qOtherText: '纯文字',
+            qOtherSegments: '迷你分段',
+            qOtherRings: '迷你环',
+            qOtherRows: '两行',
+            qOtherHidden: '不显示',
+            qStyleSegments: '分段格',
+            qStyleBar: '细线',
+            qStyleRings: '双环',
+            qStyleGauge: '仪表',
+            qStyleDots: '点阵',
+            qStyleCompact: '紧凑',
             secOptional: '可选增强',
             secOptionalHint: '默认关闭，按需开启',
             modSuggest: '输入框下一句预测',
@@ -239,13 +277,28 @@
             addHostOk: '添加',
             secTelemetry: '状态栏偏好',
             layoutLbl: '底部状态栏密度',
-            layoutDesc: '紧凑模式居中嵌在工具栏内；详细模式展开为底部居中独立行，补充 TTFT 与本步输出',
+            layoutDesc: '紧凑模式展示速度、上下文与缓存；详细模式补充 TTFT 与本步输出，均按宽度动态嵌入工具栏或换至底部行',
             layoutCompact: '紧凑',
             layoutDetailed: '详细',
             cacheLbl: '缓存命中率口径',
             cacheDesc: '选择状态栏展示整个会话的累计命中率，或最近单步命中率',
             cacheSession: '会话累计',
             cacheStep: '单步',
+            secFonts: '字体设置',
+            fontsResetBtn: '恢复默认',
+            fontsModeLbl: '自定义字体范围',
+            fontsModeDesc: '按全局或分别指定 UI 界面、对话信息与代码字体',
+            fontsModeGlobal: '全局',
+            fontsModeSplit: '分区（UI / 信息 / 代码）',
+            fontGlobalLbl: '全局正文字体',
+            fontGlobalDesc: '作用于界面控件与对话正文，保留代码等宽字体',
+            fontUiLbl: 'UI 界面字体',
+            fontUiDesc: '侧边栏、按钮、菜单与设置面板',
+            fontChatLbl: '对话信息字体',
+            fontChatDesc: 'AI 回复正文、用户气泡与输入框',
+            fontCodeLbl: '代码与等宽字体',
+            fontCodeDesc: '代码块、行内代码、代码审查、编辑器与等宽数值',
+            fontCodexDefault: '跟随 Codex 主题',
             secUpdate: '版本与更新',
             updTitle: '插件版本',
             updDescIdle: '从 GitHub 仓库检查新版本并直接更新，保留 user/ 个人配置',
@@ -288,6 +341,26 @@
           modI18nDesc: '1,900+ built-in UI entries applied in place; disable to restore English immediately',
           modMetrics: 'Live Session Status & Telemetry',
           modMetricsDesc: 'Bottom 4-state status indicator, expandable L1/L2 panels, and per-turn footer stats',
+          modQuota: 'Model Quota',
+          modQuotaDesc: 'Shows 5h / 7d remaining quota of the active pool at the bottom of the session stats panel',
+          quotaSidebarLbl: 'Show in Sidebar',
+          quotaSidebarDesc: 'Pins a quota block above Settings showing active and other pools; hidden when the sidebar collapses',
+          quotaStyleLbl: 'Active Pool',
+          quotaStyleHint: 'The pool in use, with exact values and reset time',
+          quotaOtherLbl: 'Other Pools',
+          quotaOtherHint: 'Mix freely with the active style, or hide',
+          qOtherLines: 'Lines',
+          qOtherText: 'Text',
+          qOtherSegments: 'Mini Segments',
+          qOtherRings: 'Mini Rings',
+          qOtherRows: 'Rows',
+          qOtherHidden: 'Hidden',
+          qStyleSegments: 'Segments',
+          qStyleBar: 'Bar',
+          qStyleRings: 'Rings',
+          qStyleGauge: 'Gauge',
+          qStyleDots: 'Dots',
+          qStyleCompact: 'Compact',
           secOptional: 'Optional Enhancements',
           secOptionalHint: 'Off by default, opt-in',
           modSuggest: 'Prompt Suggestions',
@@ -313,13 +386,28 @@
           addHostOk: 'Add',
           secTelemetry: 'Status Bar Preferences',
           layoutLbl: 'Status Bar Density',
-          layoutDesc: 'Compact sits centered inline; Detailed expands to a centered bottom row with TTFT and step output',
+          layoutDesc: 'Compact shows speed, context & cache; Detailed adds TTFT and step output. Both wrap dynamically based on width',
           layoutCompact: 'Compact',
           layoutDetailed: 'Detailed',
           cacheLbl: 'Cache Hit Rate Scope',
           cacheDesc: 'Display cumulative session cache hit rate or last-step hit rate',
           cacheSession: 'Session',
           cacheStep: 'Step',
+          secFonts: 'Typography',
+          fontsResetBtn: 'Reset defaults',
+          fontsModeLbl: 'Custom Font Scope',
+          fontsModeDesc: 'Apply one font globally or customize UI, Chat, and Code separately',
+          fontsModeGlobal: 'Global',
+          fontsModeSplit: 'Split (UI / Chat / Code)',
+          fontGlobalLbl: 'Global Font',
+          fontGlobalDesc: 'Applies to UI chrome and chat messages while keeping code monospace',
+          fontUiLbl: 'UI Font',
+          fontUiDesc: 'Sidebar, buttons, menus, and settings panel',
+          fontChatLbl: 'Chat Message Font',
+          fontChatDesc: 'Assistant replies, user bubbles, and composer',
+          fontCodeLbl: 'Code & Monospace Font',
+          fontCodeDesc: 'Code blocks, inline code, code review, editors, and monospace metrics',
+          fontCodexDefault: 'Follow Codex Theme',
           secUpdate: 'Updates',
           updTitle: 'Plugin Version',
           updDescIdle: 'Check GitHub for updates and apply directly; user/ config is preserved',
@@ -414,6 +502,9 @@
           uiState.config = {
             telemetryLayout: res.config.telemetryLayout || uiState.config.telemetryLayout,
             telemetryCacheMode: res.config.telemetryCacheMode || uiState.config.telemetryCacheMode,
+            quotaStyle: res.config.quotaStyle || uiState.config.quotaStyle,
+            quotaOtherStyle: res.config.quotaOtherStyle || uiState.config.quotaOtherStyle,
+            fonts: res.config.fonts ? normalizeLocalFonts(res.config.fonts) : uiState.config.fonts,
             promptSuggestionModel: res.config.promptSuggestionModel || uiState.config.promptSuggestionModel,
             sshHosts: Array.isArray(res.config.sshHosts) ? res.config.sshHosts.slice() : uiState.config.sshHosts,
             modules: Object.assign({}, uiState.config.modules, res.config.modules || {})
@@ -426,6 +517,13 @@
         if (res.modelsInfo && Array.isArray(res.modelsInfo.families) && res.modelsInfo.families.length > 0) {
           uiState.families = res.modelsInfo.families;
           window.__ag_settings_models_cache = res.modelsInfo.families;
+        }
+        if (res.installedFonts && typeof res.installedFonts === 'object') {
+          uiState.installedFonts = {
+            sans: Array.isArray(res.installedFonts.sans) ? res.installedFonts.sans.slice() : [],
+            mono: Array.isArray(res.installedFonts.mono) ? res.installedFonts.mono.slice() : []
+          };
+          window.__ag_settings_fonts_cache = uiState.installedFonts;
         }
         if (flashSaved) {
           window.__ag_settings_saved_label = flashSaved === 'refreshed' ? 'refreshed' : 'saved';
@@ -543,6 +641,24 @@
         }
         if (patch.telemetryLayout) uiState.config.telemetryLayout = patch.telemetryLayout;
         if (patch.telemetryCacheMode) uiState.config.telemetryCacheMode = patch.telemetryCacheMode;
+        if (patch.quotaStyle) {
+          uiState.config.quotaStyle = patch.quotaStyle;
+          if (typeof window.__ag_set_quota_style === 'function') {
+            try { window.__ag_set_quota_style(patch.quotaStyle); } catch {}
+          }
+        }
+        if (patch.quotaOtherStyle) {
+          uiState.config.quotaOtherStyle = patch.quotaOtherStyle;
+          if (typeof window.__ag_set_quota_other_style === 'function') {
+            try { window.__ag_set_quota_other_style(patch.quotaOtherStyle); } catch {}
+          }
+        }
+        if (patch.fonts && typeof patch.fonts === 'object') {
+          uiState.config.fonts = normalizeLocalFonts(Object.assign({}, uiState.config.fonts, patch.fonts));
+          if (typeof window.__ag_apply_user_fonts === 'function') {
+            try { window.__ag_apply_user_fonts(uiState.config.fonts); } catch {}
+          }
+        }
         if (patch.promptSuggestionModel) {
           uiState.config.promptSuggestionModel = patch.promptSuggestionModel;
           if (uiState.config.modules.promptSuggestions && uiState.agyStatus.available) {
@@ -1047,6 +1163,294 @@
         }
       }
 
+      let activeFontSlot = '';
+      let activeFontTrigger = null;
+      let cachedDetectedFonts = null;
+
+      function detectAvailableFonts() {
+        if (cachedDetectedFonts) return cachedDetectedFonts;
+        const bundled = new Set();
+        try {
+          if (document.fonts && typeof document.fonts[Symbol.iterator] === 'function') {
+            for (const f of document.fonts) {
+              if (f && f.family) bundled.add(String(f.family).replace(/^["']|["']$/g, '').trim());
+            }
+          }
+        } catch {}
+
+        let hasFont = () => false;
+        try {
+          const canvas = document.createElement('canvas');
+          const ctx = canvas && canvas.getContext ? canvas.getContext('2d') : null;
+          if (ctx) {
+            const sample = 'mmmmmmmmmmlli中文测试12345';
+            const measure = (font) => {
+              ctx.font = '72px ' + font;
+              return ctx.measureText(sample).width;
+            };
+            const baseMono = measure('monospace');
+            const baseSans = measure('sans-serif');
+            const baseSerif = measure('serif');
+            hasFont = (name) => {
+              if (bundled.has(name)) return true;
+              const q = JSON.stringify(name);
+              return (
+                measure(q + ',monospace') !== baseMono ||
+                measure(q + ',sans-serif') !== baseSans ||
+                measure(q + ',serif') !== baseSerif
+              );
+            };
+          }
+        } catch {}
+
+        const sansCandidates = [
+          'Inter',
+          'Google Sans',
+          'PingFang SC',
+          'Hiragino Sans GB',
+          'Microsoft YaHei UI',
+          'Microsoft YaHei',
+          'Segoe UI',
+          'LXGW WenKai',
+          'LXGW WenKai Screen',
+          'HarmonyOS Sans SC',
+          'MiSans',
+          'OPPO Sans',
+          'Alibaba PuHuiTi 3.0',
+          'Noto Sans SC',
+          'Noto Sans CJK SC',
+          'Source Han Sans SC',
+          'Sarasa Gothic SC',
+          'Songti SC',
+          'Noto Serif SC',
+          'Kaiti SC',
+          'Heiti SC',
+          'Helvetica Neue',
+          'Georgia'
+        ];
+        const monoCandidates = [
+          'Google Sans Code',
+          'SF Mono',
+          'JetBrains Mono',
+          'Fira Code',
+          'Maple Mono',
+          'Maple Mono NF CN',
+          'Monaspace Neon',
+          'Cascadia Code',
+          'Cascadia Mono',
+          'Iosevka',
+          'SFMono-Regular',
+          'Menlo',
+          'Monaco',
+          'Consolas',
+          'Source Code Pro',
+          'IBM Plex Mono',
+          'Roboto Mono',
+          'Sarasa Mono SC',
+          'Ubuntu Mono',
+          'Hack',
+          'MesloLGS NF',
+          'DejaVu Sans Mono'
+        ];
+
+        const sans = sansCandidates.filter(hasFont);
+        const mono = monoCandidates.filter(hasFont);
+        cachedDetectedFonts = {
+          sans: sans.length > 0 ? sans : ['Inter', 'Google Sans'],
+          mono: mono.length > 0 ? mono : ['Google Sans Code', 'Menlo', 'Consolas']
+        };
+        return cachedDetectedFonts;
+      }
+
+      function positionFontMenuInModal(menu, anchorEl) {
+        if (!menu || !anchorEl) return;
+        menu.setAttribute('data-js-pos', '1');
+        const ar = anchorEl.getBoundingClientRect();
+        const vw = window.innerWidth || 1280;
+        const vh = window.innerHeight || 800;
+        const boundsEl =
+          activeDlg ||
+          (anchorEl.closest && anchorEl.closest('.settings-modal-container, [role="dialog"]')) ||
+          document.getElementById('ag-settings-pane');
+        const br = boundsEl ? boundsEl.getBoundingClientRect() : { top: 0, bottom: vh, left: 0, right: vw };
+        const pad = 10;
+        const minTop = Math.max(12, br.top + pad);
+        const maxBottom = Math.min(vh - 12, br.bottom - pad);
+        const minLeft = Math.max(12, br.left + pad);
+        const maxRight = Math.min(vw - 12, br.right - pad);
+
+        menu.style.maxHeight = '';
+        const ow = menu.offsetWidth || 228;
+        const naturalH = Math.max(44, Math.min(248, (menu.scrollHeight || 180) + 4));
+        const spaceBelow = Math.max(0, maxBottom - (ar.bottom + 6));
+        const spaceAbove = Math.max(0, ar.top - 6 - minTop);
+
+        const openAbove = spaceBelow < naturalH && spaceAbove > spaceBelow;
+        const availH = openAbove ? spaceAbove : spaceBelow;
+        const maxH = Math.max(88, Math.min(248, availH));
+        menu.style.maxHeight = Math.floor(maxH) + 'px';
+
+        const actualH = Math.min(menu.offsetHeight || naturalH, maxH);
+        let top = openAbove ? ar.top - actualH - 6 : ar.bottom + 6;
+        if (top + actualH > maxBottom) top = maxBottom - actualH;
+        if (top < minTop) top = minTop;
+
+        let left = ar.right - ow;
+        if (left + ow > maxRight) left = maxRight - ow;
+        if (left < minLeft) left = minLeft;
+
+        menu.style.left = Math.round(left) + 'px';
+        menu.style.top = Math.round(top) + 'px';
+      }
+
+      function hideFontMenu({ restoreFocus = false, fromPointer = false } = {}) {
+        const menu = document.getElementById('ag-settings-font-menu');
+        if (menu) {
+          if (SUPPORTS_POPOVER) {
+            try {
+              if (menu.matches(':popover-open')) menu.hidePopover();
+            } catch {}
+          } else {
+            menu.hidden = true;
+          }
+        }
+        if (activeFontTrigger) {
+          activeFontTrigger.setAttribute('aria-expanded', 'false');
+          if (restoreFocus) {
+            try {
+              activeFontTrigger.focus({ focusVisible: !fromPointer });
+            } catch {
+              try { activeFontTrigger.focus(); } catch {}
+            }
+          }
+        }
+        activeFontSlot = '';
+        activeFontTrigger = null;
+      }
+
+      function ensureFontMenu() {
+        let menu = document.getElementById('ag-settings-font-menu');
+        if (menu) return menu;
+
+        menu = document.createElement('div');
+        menu.id = 'ag-settings-font-menu';
+        menu.setAttribute('data-js-pos', '1');
+        if (SUPPORTS_POPOVER) {
+          menu.setAttribute('popover', 'auto');
+        } else {
+          menu.hidden = true;
+        }
+        menu.innerHTML = '<div class="ag-s-menu-list" role="menu"></div>';
+        document.body.appendChild(menu);
+
+        menu.addEventListener('toggle', (ev) => {
+          if (ev.newState !== 'open') {
+            if (activeFontTrigger) activeFontTrigger.setAttribute('aria-expanded', 'false');
+            activeFontSlot = '';
+            activeFontTrigger = null;
+          }
+        });
+
+        menu.addEventListener('click', (ev) => {
+          const row = ev.target && ev.target.closest ? ev.target.closest('[data-pick-font]') : null;
+          if (!row || !activeFontSlot) return;
+          const slot = activeFontSlot;
+          const val = row.getAttribute('data-pick-font') || '';
+          hideFontMenu({ restoreFocus: true, fromPointer: ev.detail !== 0 });
+          if ((uiState.config.fonts[slot] || '') !== val) {
+            commitPatch({ fonts: { [slot]: val } });
+          }
+        });
+
+        return menu;
+      }
+
+      function toggleFontMenu(slot, triggerBtn, fromKeyboard) {
+        const menu = ensureFontMenu();
+        if (isPopoverOpen(menu) && activeFontSlot === slot) {
+          hideFontMenu({ restoreFocus: fromKeyboard, fromPointer: !fromKeyboard });
+          return;
+        }
+        hideModelMenus({ restoreFocus: false });
+        if (activeFontTrigger && activeFontTrigger !== triggerBtn) {
+          activeFontTrigger.setAttribute('aria-expanded', 'false');
+        }
+
+        activeFontSlot = slot;
+        activeFontTrigger = triggerBtn;
+
+        const s = getStrings();
+        const curVal = (uiState.config.fonts && uiState.config.fonts[slot]) || '';
+        const detected = detectAvailableFonts();
+        const scanned = uiState.installedFonts || { sans: [], mono: [] };
+        const isMono = slot === 'code';
+        const items = [{ value: '', label: s.fontCodexDefault, preview: '' }];
+        const seen = new Set(['']);
+
+        const mergedList = (isMono ? detected.mono : detected.sans).concat(
+          isMono ? scanned.mono || [] : scanned.sans || []
+        );
+        for (let i = 0; i < mergedList.length; i++) {
+          const name = mergedList[i];
+          if (!name) continue;
+          const key = name.toLowerCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
+          items.push({ value: name, label: name, preview: name });
+        }
+        if (curVal && !seen.has(curVal.toLowerCase())) {
+          items.splice(1, 0, { value: curVal, label: curVal, preview: curVal });
+        }
+
+        const listEl = menu.querySelector('.ag-s-menu-list');
+        if (listEl) {
+          listEl.innerHTML = items
+            .map((it) => {
+              const isSel = curVal.toLowerCase() === it.value.toLowerCase();
+              const prevStack =
+                it.preview && typeof buildFontStack === 'function'
+                  ? buildFontStack(it.preview, isMono ? 'mono' : 'sans')
+                  : '';
+              return (
+                '<button type="button" class="ag-s-menu-row" role="menuitemradio" aria-checked="' +
+                (isSel ? 'true' : 'false') +
+                '" data-selected="' +
+                (isSel ? 'true' : 'false') +
+                '" data-pick-font="' +
+                escHtml(it.value) +
+                '">' +
+                '<span class="ag-s-menu-row-name"' +
+                (prevStack ? ' style="font-family:' + escHtml(prevStack) + ' !important"' : '') +
+                '>' +
+                escHtml(it.label) +
+                '</span>' +
+                '<span class="ag-s-menu-row-right" aria-hidden="true">' +
+                (isSel
+                  ? '<svg class="ag-s-menu-row-check" width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8.5l3 3 6-6.5"/></svg>'
+                  : '') +
+                '</span>' +
+                '</button>'
+              );
+            })
+            .join('');
+        }
+
+        if (SUPPORTS_POPOVER) {
+          try {
+            menu.showPopover();
+          } catch {}
+        } else {
+          menu.hidden = false;
+        }
+        positionFontMenuInModal(menu, triggerBtn);
+        triggerBtn.setAttribute('aria-expanded', 'true');
+
+        if (fromKeyboard && listEl) {
+          const target = listEl.querySelector('button[aria-checked="true"]') || listEl.querySelector('button');
+          if (target) target.focus();
+        }
+      }
+
       function renderPane() {
         const navBtn = document.getElementById('ag-settings-nav-btn');
         const s = getStrings();
@@ -1062,8 +1466,184 @@
 
         const cfg = uiState.config;
         const mods = cfg.modules || {};
+        const quotaOn = mods.quota !== false;
+        const curQuotaStyle = ['segments', 'bar', 'rings', 'gauge', 'dots', 'compact'].includes(cfg.quotaStyle)
+          ? cfg.quotaStyle
+          : 'segments';
         const psOn = Boolean(mods.promptSuggestions);
         const sshOn = Boolean(mods.sshRemote);
+
+        const quotaStyleCardsHtml = [
+          {
+            id: 'segments',
+            label: s.qStyleSegments,
+            svg:
+              '<svg width="42" height="16" viewBox="0 0 42 16" fill="none" aria-hidden="true">' +
+              '<rect x="1" y="3" width="6.5" height="2.6" rx="1.3" fill="currentColor"/>' +
+              '<rect x="9.3" y="3" width="6.5" height="2.6" rx="1.3" fill="currentColor"/>' +
+              '<rect x="17.6" y="3" width="6.5" height="2.6" rx="1.3" fill="currentColor"/>' +
+              '<rect x="25.9" y="3" width="6.5" height="2.6" rx="1.3" fill="currentColor"/>' +
+              '<rect x="34.2" y="3" width="6.5" height="2.6" rx="1.3" fill="currentColor" opacity="0.22"/>' +
+              '<rect x="1" y="10" width="6.5" height="2.6" rx="1.3" fill="currentColor"/>' +
+              '<rect x="9.3" y="10" width="6.5" height="2.6" rx="1.3" fill="currentColor"/>' +
+              '<rect x="17.6" y="10" width="6.5" height="2.6" rx="1.3" fill="currentColor" opacity="0.22"/>' +
+              '<rect x="25.9" y="10" width="6.5" height="2.6" rx="1.3" fill="currentColor" opacity="0.22"/>' +
+              '<rect x="34.2" y="10" width="6.5" height="2.6" rx="1.3" fill="currentColor" opacity="0.22"/>' +
+              '</svg>'
+          },
+          {
+            id: 'bar',
+            label: s.qStyleBar,
+            svg:
+              '<svg width="42" height="16" viewBox="0 0 42 16" fill="none" aria-hidden="true">' +
+              '<rect x="1" y="3" width="40" height="2.6" rx="1.3" fill="currentColor" opacity="0.2"/>' +
+              '<rect x="1" y="3" width="32" height="2.6" rx="1.3" fill="currentColor"/>' +
+              '<rect x="1" y="10" width="40" height="2.6" rx="1.3" fill="currentColor" opacity="0.2"/>' +
+              '<rect x="1" y="10" width="18" height="2.6" rx="1.3" fill="currentColor"/>' +
+              '</svg>'
+          },
+          {
+            id: 'rings',
+            label: s.qStyleRings,
+            svg:
+              '<svg width="42" height="18" viewBox="0 0 42 18" fill="none" aria-hidden="true">' +
+              '<circle cx="12" cy="9" r="6" stroke="currentColor" stroke-opacity="0.2" stroke-width="2.2"/>' +
+              '<circle cx="12" cy="9" r="6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-dasharray="29 38" transform="rotate(-90 12 9)"/>' +
+              '<circle cx="30" cy="9" r="6" stroke="currentColor" stroke-opacity="0.2" stroke-width="2.2"/>' +
+              '<circle cx="30" cy="9" r="6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-dasharray="18 38" transform="rotate(-90 30 9)"/>' +
+              '</svg>'
+          },
+          {
+            id: 'gauge',
+            label: s.qStyleGauge,
+            svg:
+              '<svg width="42" height="18" viewBox="0 0 42 18" fill="none" aria-hidden="true">' +
+              '<path d="M3 14 A7.5 7.5 0 0 1 18 14" stroke="currentColor" stroke-opacity="0.2" stroke-width="2.3" stroke-linecap="round"/>' +
+              '<path d="M3 14 A7.5 7.5 0 0 1 18 14" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-dasharray="19 24"/>' +
+              '<path d="M24 14 A7.5 7.5 0 0 1 39 14" stroke="currentColor" stroke-opacity="0.2" stroke-width="2.3" stroke-linecap="round"/>' +
+              '<path d="M24 14 A7.5 7.5 0 0 1 39 14" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-dasharray="11 24"/>' +
+              '</svg>'
+          },
+          {
+            id: 'dots',
+            label: s.qStyleDots,
+            svg:
+              '<svg width="42" height="16" viewBox="0 0 42 16" fill="none" aria-hidden="true">' +
+              '<circle cx="4" cy="4.5" r="2" fill="currentColor"/><circle cx="11" cy="4.5" r="2" fill="currentColor"/><circle cx="18" cy="4.5" r="2" fill="currentColor"/><circle cx="25" cy="4.5" r="2" fill="currentColor"/><circle cx="32" cy="4.5" r="2" fill="currentColor" opacity="0.45"/><circle cx="39" cy="4.5" r="2" fill="currentColor" opacity="0.2"/>' +
+              '<circle cx="4" cy="11.5" r="2" fill="currentColor"/><circle cx="11" cy="11.5" r="2" fill="currentColor"/><circle cx="18" cy="11.5" r="2" fill="currentColor"/><circle cx="25" cy="11.5" r="2" fill="currentColor" opacity="0.2"/><circle cx="32" cy="11.5" r="2" fill="currentColor" opacity="0.2"/><circle cx="39" cy="11.5" r="2" fill="currentColor" opacity="0.2"/>' +
+              '</svg>'
+          },
+          {
+            id: 'compact',
+            label: s.qStyleCompact,
+            svg:
+              '<svg width="42" height="16" viewBox="0 0 42 16" fill="none" aria-hidden="true">' +
+              '<rect x="2" y="4" width="2.4" height="8" rx="0.8" fill="currentColor"/>' +
+              '<rect x="5.8" y="4" width="2.4" height="8" rx="0.8" fill="currentColor"/>' +
+              '<rect x="9.6" y="4" width="2.4" height="8" rx="0.8" fill="currentColor"/>' +
+              '<rect x="13.4" y="4" width="2.4" height="8" rx="0.8" fill="currentColor" opacity="0.22"/>' +
+              '<rect x="20.5" y="3.5" width="1" height="9" fill="currentColor" opacity="0.22"/>' +
+              '<rect x="26" y="4" width="2.4" height="8" rx="0.8" fill="currentColor"/>' +
+              '<rect x="29.8" y="4" width="2.4" height="8" rx="0.8" fill="currentColor"/>' +
+              '<rect x="33.6" y="4" width="2.4" height="8" rx="0.8" fill="currentColor" opacity="0.22"/>' +
+              '<rect x="37.4" y="4" width="2.4" height="8" rx="0.8" fill="currentColor" opacity="0.22"/>' +
+              '</svg>'
+          }
+        ]
+          .map(
+            (opt) =>
+              '<button type="button" class="ag-s-qstyle-card" data-quota-style="' +
+              opt.id +
+              '" aria-pressed="' +
+              (curQuotaStyle === opt.id ? 'true' : 'false') +
+              '">' +
+              '<span class="ag-s-qstyle-prev">' +
+              opt.svg +
+              '</span>' +
+              '<span>' +
+              escHtml(opt.label) +
+              '</span>' +
+              '</button>'
+          )
+          .join('');
+        const quotaSidebarOn = quotaOn && mods.quotaSidebar !== false;
+        const curQuotaOther = ['lines', 'text', 'segments', 'rings', 'rows', 'hidden'].includes(cfg.quotaOtherStyle)
+          ? cfg.quotaOtherStyle
+          : 'lines';
+        const qWl = (x, t) =>
+          '<rect x="' + x + '" y="' + (t - 3.5) + '" width="9" height="7" rx="1.6" fill="currentColor" opacity="0.18"/>';
+        const quotaOtherCardsHtml = [
+          {
+            id: 'lines',
+            label: s.qOtherLines,
+            svg:
+              '<svg width="44" height="16" viewBox="0 0 44 16" fill="none" aria-hidden="true">' + qWl(1, 8) +
+              '<rect x="12" y="7.2" width="9" height="1.6" rx="0.8" fill="currentColor"/>' + qWl(24, 8) +
+              '<rect x="35" y="7.2" width="8" height="1.6" rx="0.8" fill="currentColor" opacity="0.2"/>' +
+              '<rect x="35" y="7.2" width="5" height="1.6" rx="0.8" fill="currentColor"/></svg>'
+          },
+          {
+            id: 'text',
+            label: s.qOtherText,
+            svg:
+              '<svg width="44" height="16" viewBox="0 0 44 16" fill="none" aria-hidden="true">' + qWl(1, 8) +
+              '<rect x="12" y="6" width="9" height="4" rx="1" fill="currentColor"/>' + qWl(24, 8) +
+              '<rect x="35" y="6" width="8" height="4" rx="1" fill="currentColor"/></svg>'
+          },
+          {
+            id: 'segments',
+            label: s.qOtherSegments,
+            svg:
+              '<svg width="44" height="16" viewBox="0 0 44 16" fill="none" aria-hidden="true">' + qWl(1, 8) +
+              [12, 15, 18].map((x) => '<rect x="' + x + '" y="5.5" width="2.2" height="5" rx="0.6" fill="currentColor"/>').join('') +
+              qWl(24, 8) +
+              [35, 38].map((x) => '<rect x="' + x + '" y="5.5" width="2.2" height="5" rx="0.6" fill="currentColor"/>').join('') +
+              '<rect x="41" y="5.5" width="2.2" height="5" rx="0.6" fill="currentColor" opacity="0.2"/></svg>'
+          },
+          {
+            id: 'rings',
+            label: s.qOtherRings,
+            svg:
+              '<svg width="44" height="16" viewBox="0 0 44 16" fill="none" aria-hidden="true">' +
+              '<circle cx="7" cy="8" r="4.5" stroke="currentColor" stroke-width="1.8"/>' + qWl(13, 8) +
+              '<circle cx="29" cy="8" r="4.5" stroke="currentColor" stroke-opacity="0.2" stroke-width="1.8"/>' +
+              '<circle cx="29" cy="8" r="4.5" stroke="currentColor" stroke-width="1.8" stroke-dasharray="20 29" transform="rotate(-90 29 8)"/>' +
+              qWl(35, 8) + '</svg>'
+          },
+          {
+            id: 'rows',
+            label: s.qOtherRows,
+            svg:
+              '<svg width="44" height="18" viewBox="0 0 44 18" fill="none" aria-hidden="true">' + qWl(1, 5) +
+              '<rect x="13" y="4.2" width="30" height="1.6" rx="0.8" fill="currentColor"/>' + qWl(1, 13) +
+              '<rect x="13" y="12.2" width="30" height="1.6" rx="0.8" fill="currentColor" opacity="0.2"/>' +
+              '<rect x="13" y="12.2" width="22" height="1.6" rx="0.8" fill="currentColor"/></svg>'
+          },
+          {
+            id: 'hidden',
+            label: s.qOtherHidden,
+            svg:
+              '<svg width="44" height="16" viewBox="0 0 44 16" fill="none" aria-hidden="true">' +
+              '<rect x="6" y="5" width="32" height="6" rx="3" stroke="currentColor" stroke-opacity="0.35" stroke-dasharray="2.5 2.5"/>' +
+              '<path d="M18 13 L26 3" stroke="currentColor" stroke-opacity="0.5" stroke-width="1.4" stroke-linecap="round"/></svg>'
+          }
+        ]
+          .map(
+            (opt) =>
+              '<button type="button" class="ag-s-qstyle-card" data-quota-other-style="' +
+              opt.id +
+              '" aria-pressed="' +
+              (curQuotaOther === opt.id ? 'true' : 'false') +
+              '">' +
+              '<span class="ag-s-qstyle-prev">' +
+              opt.svg +
+              '</span>' +
+              '<span>' +
+              escHtml(opt.label) +
+              '</span>' +
+              '</button>'
+          )
+          .join('');
         const selInfo = findSelectedModelInfo(cfg.promptSuggestionModel);
         const savedActive = Boolean(window.__ag_settings_saved_until && Date.now() < window.__ag_settings_saved_until);
 
@@ -1201,6 +1781,66 @@
           (mods.metrics !== false ? 'checked' : '') +
           ' />' +
           '</div></div>' +
+          '<div class="ag-s-row"><div class="ag-s-row-main">' +
+          '<div class="ag-s-row-info"><label class="ag-s-row-label" for="ag-s-sw-quota">' +
+          escHtml(s.modQuota) +
+          '</label><div class="ag-s-row-desc">' +
+          escHtml(s.modQuotaDesc) +
+          '</div></div>' +
+          '<input id="ag-s-sw-quota" type="checkbox" switch role="switch" class="ag-s-switch" data-bind-mod="quota" aria-label="' +
+          escHtml(s.modQuota) +
+          '" ' +
+          (quotaOn ? 'checked' : '') +
+          ' />' +
+          '</div>' +
+          '<div class="ag-s-subrow"' +
+          (quotaOn ? '' : ' hidden') +
+          '>' +
+          '<div>' +
+          '<label class="ag-s-sub-label" for="ag-s-sw-quota-sidebar">' +
+          escHtml(s.quotaSidebarLbl) +
+          '</label>' +
+          '<div class="ag-s-sub-desc">' +
+          escHtml(s.quotaSidebarDesc) +
+          '</div>' +
+          '</div>' +
+          '<input id="ag-s-sw-quota-sidebar" type="checkbox" switch role="switch" class="ag-s-switch" data-bind-mod="quotaSidebar" aria-label="' +
+          escHtml(s.quotaSidebarLbl) +
+          '" ' +
+          (quotaSidebarOn ? 'checked' : '') +
+          ' />' +
+          '</div>' +
+          '<div class="ag-s-subrow ag-s-qstyle-subrow"' +
+          (quotaSidebarOn ? '' : ' hidden') +
+          '>' +
+          '<div class="ag-s-qstyle-hdr">' +
+          '<span class="ag-s-sub-label">' +
+          escHtml(s.quotaStyleLbl) +
+          '</span>' +
+          '<span class="ag-s-qstyle-hint">' +
+          escHtml(s.quotaStyleHint) +
+          '</span>' +
+          '</div>' +
+          '<div class="ag-s-qstyle-grid" role="group" aria-label="' +
+          escHtml(s.quotaStyleLbl) +
+          '">' +
+          quotaStyleCardsHtml +
+          '</div>' +
+          '<div class="ag-s-qstyle-hdr" style="margin-top:6px">' +
+          '<span class="ag-s-sub-label">' +
+          escHtml(s.quotaOtherLbl) +
+          '</span>' +
+          '<span class="ag-s-qstyle-hint">' +
+          escHtml(s.quotaOtherHint) +
+          '</span>' +
+          '</div>' +
+          '<div class="ag-s-qstyle-grid" role="group" aria-label="' +
+          escHtml(s.quotaOtherLbl) +
+          '">' +
+          quotaOtherCardsHtml +
+          '</div>' +
+          '</div>' +
+          '</div>' +
           '</div>' +
           '</div>' +
           // Group 2: Optional Enhancements
@@ -1357,7 +1997,77 @@
           '</div></div>' +
           '</div>' +
           '</div>' +
-          // Group 4: Plugin Version & Updates
+          // Group 4: Custom Fonts (Global or Split: UI / Chat / Code — clean native dropdown triggers)
+          (() => {
+            const f = normalizeLocalFonts(cfg.fonts);
+            const isSplit = f.mode === 'split';
+            const hasCustomFont = Boolean(f.global || f.ui || f.chat || f.code);
+            const mkFontRow = (slot, lbl, desc) => {
+              const cur = f[slot] || '';
+              const display = cur || s.fontCodexDefault;
+              return (
+                '<div class="ag-s-row"><div class="ag-s-row-main">' +
+                '<div class="ag-s-row-info"><div class="ag-s-row-label">' +
+                escHtml(lbl) +
+                '</div><div class="ag-s-row-desc">' +
+                escHtml(desc) +
+                '</div></div>' +
+                '<button type="button" class="ag-s-pill-trigger ag-s-font-trigger" data-font-trigger="' +
+                slot +
+                '" aria-haspopup="menu" aria-expanded="false">' +
+                '<span class="ag-s-font-trigger-name">' +
+                escHtml(display) +
+                '</span>' +
+                '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="opacity:0.6;flex-shrink:0"><path d="M4 6l4 4 4-4"/></svg>' +
+                '</button>' +
+                '</div></div>'
+              );
+            };
+
+            return (
+              '<div>' +
+              '<div class="ag-s-section-head">' +
+              '<span class="ag-s-section-title">' +
+              escHtml(s.secFonts) +
+              '</span>' +
+              (hasCustomFont
+                ? '<button type="button" id="ag-s-fonts-reset" class="ag-s-link-btn">' +
+                  escHtml(s.fontsResetBtn) +
+                  '</button>'
+                : '') +
+              '</div>' +
+              '<div class="ag-s-card">' +
+              '<div class="ag-s-row"><div class="ag-s-row-main">' +
+              '<div class="ag-s-row-info"><div class="ag-s-row-label">' +
+              escHtml(s.fontsModeLbl) +
+              '</div><div class="ag-s-row-desc">' +
+              escHtml(s.fontsModeDesc) +
+              '</div></div>' +
+              '<div class="ag-s-seg" role="group" aria-label="' +
+              escHtml(s.fontsModeLbl) +
+              '">' +
+              '<button type="button" class="ag-s-seg-btn" data-font-mode="global" aria-pressed="' +
+              (!isSplit ? 'true' : 'false') +
+              '">' +
+              escHtml(s.fontsModeGlobal) +
+              '</button>' +
+              '<button type="button" class="ag-s-seg-btn" data-font-mode="split" aria-pressed="' +
+              (isSplit ? 'true' : 'false') +
+              '">' +
+              escHtml(s.fontsModeSplit) +
+              '</button>' +
+              '</div>' +
+              '</div></div>' +
+              (isSplit
+                ? mkFontRow('ui', s.fontUiLbl, s.fontUiDesc) +
+                  mkFontRow('chat', s.fontChatLbl, s.fontChatDesc) +
+                  mkFontRow('code', s.fontCodeLbl, s.fontCodeDesc)
+                : mkFontRow('global', s.fontGlobalLbl, s.fontGlobalDesc)) +
+              '</div>' +
+              '</div>'
+            );
+          })() +
+          // Group 5: Plugin Version & Updates
           (() => {
             const u = uiState.update || {};
             const verStr = u.currentVersion ? 'v' + String(u.currentVersion).replace(/^v/i, '') : getShortVersionTag();
@@ -1529,11 +2239,20 @@
           syncStatusPoller();
         } else {
           hideModelMenus({ restoreFocus: false });
+          hideFontMenu({ restoreFocus: false });
           syncStatusPoller();
         }
       }
 
       function bindPaneEvents(pane) {
+        pane.addEventListener(
+          'scroll',
+          () => {
+            if (activeFontSlot) hideFontMenu({ restoreFocus: false });
+          },
+          { passive: true }
+        );
+
         pane.addEventListener('change', (ev) => {
           const sw = ev.target && ev.target.closest ? ev.target.closest('input.ag-s-switch[data-bind-mod]') : null;
           if (!sw) return;
@@ -1602,11 +2321,55 @@
 
           const seg = ev.target && ev.target.closest ? ev.target.closest('.ag-s-seg-btn[data-seg]') : null;
           if (seg) {
+            if (seg.disabled) return;
             const field = seg.getAttribute('data-seg');
             const val = seg.getAttribute('data-val');
             if (field && val && uiState.config[field] !== val) {
               commitPatch({ [field]: val });
             }
+            return;
+          }
+
+          const qoCard = ev.target && ev.target.closest ? ev.target.closest('[data-quota-other-style]') : null;
+          if (qoCard) {
+            const val = qoCard.getAttribute('data-quota-other-style');
+            if (val && uiState.config.quotaOtherStyle !== val) {
+              commitPatch({ quotaOtherStyle: val });
+            }
+            return;
+          }
+
+          const qCard = ev.target && ev.target.closest ? ev.target.closest('[data-quota-style]') : null;
+          if (qCard) {
+            const val = qCard.getAttribute('data-quota-style');
+            if (val && uiState.config.quotaStyle !== val) {
+              commitPatch({ quotaStyle: val });
+            }
+            return;
+          }
+
+          const fMode = ev.target && ev.target.closest ? ev.target.closest('[data-font-mode]') : null;
+          if (fMode) {
+            const mode = fMode.getAttribute('data-font-mode');
+            if ((mode === 'global' || mode === 'split') && uiState.config.fonts.mode !== mode) {
+              hideFontMenu({ restoreFocus: false });
+              commitPatch({ fonts: { mode } });
+            }
+            return;
+          }
+
+          const fTrig = ev.target && ev.target.closest ? ev.target.closest('[data-font-trigger]') : null;
+          if (fTrig) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            const slot = fTrig.getAttribute('data-font-trigger');
+            if (slot) toggleFontMenu(slot, fTrig, ev.detail === 0);
+            return;
+          }
+
+          if (ev.target && ev.target.closest && ev.target.closest('#ag-s-fonts-reset')) {
+            hideFontMenu({ restoreFocus: false });
+            commitPatch({ fonts: { global: '', ui: '', chat: '', code: '' } });
             return;
           }
 
@@ -1635,6 +2398,15 @@
         });
 
         pane.addEventListener('keydown', (ev) => {
+          const fTrig = ev.target && ev.target.closest ? ev.target.closest('[data-font-trigger]') : null;
+          if (fTrig && ev.key === 'ArrowDown') {
+            ev.preventDefault();
+            ev.stopPropagation();
+            const slot = fTrig.getAttribute('data-font-trigger');
+            if (slot) toggleFontMenu(slot, fTrig, true);
+            return;
+          }
+
           const trigger = ev.target && ev.target.closest ? ev.target.closest('#ag-s-model-trigger') : null;
           if (trigger && ev.key === 'ArrowDown') {
             ev.preventDefault();
@@ -1666,6 +2438,7 @@
             window.__ag_settings_tab_open = false;
             window.__ag_settings_scroll_top = 0;
             hideModelMenus({ restoreFocus: false });
+            hideFontMenu({ restoreFocus: false });
             syncStatusPoller();
           }
           return;
@@ -1786,6 +2559,17 @@
           ) {
             hideModelMenus({ restoreFocus: false });
           }
+          const fontMenu = document.getElementById('ag-settings-font-menu');
+          if (
+            fontMenu &&
+            !fontMenu.hidden &&
+            ev.target &&
+            ev.target.closest &&
+            !ev.target.closest('#ag-settings-font-menu') &&
+            !ev.target.closest('[data-font-trigger]')
+          ) {
+            hideFontMenu({ restoreFocus: false });
+          }
         }
         if (ev.target && ev.target.closest && ev.target.closest('[data-testid="settings-button"]')) {
           scheduleScan(40);
@@ -1832,9 +2616,11 @@
             try { activeSidebar.removeEventListener('click', boundSidebarClick, true); } catch {}
           }
           hideModelMenus({ restoreFocus: false });
+          hideFontMenu({ restoreFocus: false });
           const oldPopovers = [
             document.getElementById('ag-settings-model-menu'),
-            document.getElementById('ag-settings-effort-menu')
+            document.getElementById('ag-settings-effort-menu'),
+            document.getElementById('ag-settings-font-menu')
           ];
           oldPopovers.forEach((el) => { if (el) el.remove(); });
           // Preserve nav & pane nodes across hot-reloads only if modal is closed? Remove cleanly so new bundle re-mounts fresh with preserved __ag_settings_tab_open!

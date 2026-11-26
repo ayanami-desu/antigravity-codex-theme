@@ -1,6 +1,6 @@
 /**
  * Part 50: Telemetry Pill, Hover Bento Tooltip, Per-Turn Badges & Live 4-State Probe Loop
- * Supports both the main conversation pane and the right-hand Side Question (旁路提问) pane.
+ * Supports single, split-screen (multi-conversation), and Side Question (旁路提问) panes.
  */
   // Remove any stale DOM nodes and observers from a prior bundle version so fresh listeners attach cleanly
   try {
@@ -82,12 +82,79 @@
     return '';
   }
 
-  function extractSideCascadeId(sideContent) {
+  function isPaneElementHidden(el) {
+    if (!el) return false;
     try {
-      if (!sideContent) return '';
-      const convEl = sideContent.querySelector('[data-testid="side-question-tab-conversation"][data-cascade-id]');
-      const attrCid = convEl ? String(convEl.getAttribute('data-cascade-id') || '').trim() : '';
-      if (AG_UUID_RE.test(attrCid)) return attrCid;
+      if (el.closest && el.closest('[hidden]')) return true;
+      if (typeof window.getComputedStyle === 'function') {
+        const cs = window.getComputedStyle(el);
+        if (cs && cs.display === 'none') return true;
+      }
+    } catch (e) {}
+    return false;
+  }
+
+  function extractBoxFiberCascadeId(box) {
+    try {
+      if (!box) return '';
+      const fk = Object.keys(box).find(
+        (k) => k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$')
+      );
+      let cur = fk ? box[fk] : null;
+      for (let i = 0; i < 40 && cur; i++, cur = cur.return) {
+        const val = cur.memoizedProps && cur.memoizedProps.value;
+        const asp =
+          val &&
+          ((val.cascadeContext && val.cascadeContext.state && val.cascadeContext.state.agentStateProvider) ||
+            val.agentStateProvider);
+        if (asp && typeof asp.getState === 'function') {
+          const st = asp.getState();
+          const cid = st && st.conversationId ? String(st.conversationId).trim() : '';
+          if (AG_UUID_RE.test(cid)) return cid;
+        }
+        const directCid = cur.memoizedProps && cur.memoizedProps.cascadeId;
+        if (typeof directCid === 'string' && AG_UUID_RE.test(directCid.trim())) {
+          return directCid.trim();
+        }
+      }
+    } catch (e) {}
+    return '';
+  }
+
+  function extractMainPaneCascadeId(box, convView, allowGlobalFallback) {
+    try {
+      if (convView) {
+        const attrCid = String(
+          convView.getAttribute('data-cascade-id') ||
+            convView.getAttribute('data-quotable-pane-cascade-id') ||
+            ''
+        ).trim();
+        if (AG_UUID_RE.test(attrCid)) return attrCid;
+      }
+      const cidHolder = box && box.closest ? box.closest('[data-cascade-id]') : null;
+      if (
+        cidHolder &&
+        (!cidHolder.closest || !cidHolder.closest('[data-testid="side-question-tab-content"]'))
+      ) {
+        const holderCid = String(cidHolder.getAttribute('data-cascade-id') || '').trim();
+        if (AG_UUID_RE.test(holderCid)) return holderCid;
+      }
+      const fiberCid = extractBoxFiberCascadeId(box);
+      if (AG_UUID_RE.test(fiberCid)) return fiberCid;
+    } catch (e) {}
+    return allowGlobalFallback ? extractCascadeId() : '';
+  }
+
+  function extractSideCascadeId(sideContent, box) {
+    try {
+      if (sideContent) {
+        const convEl = sideContent.querySelector('[data-testid="side-question-tab-conversation"]');
+        const attrCid = convEl ? String(convEl.getAttribute('data-cascade-id') || '').trim() : '';
+        if (AG_UUID_RE.test(attrCid)) return attrCid;
+      }
+      const holder = box && box.closest ? box.closest('[data-cascade-id]') : null;
+      const holderCid = holder ? String(holder.getAttribute('data-cascade-id') || '').trim() : '';
+      if (AG_UUID_RE.test(holderCid)) return holderCid;
     } catch (e) {}
     return '';
   }
@@ -96,8 +163,8 @@
     const panes = [];
     try {
       const boxes = document.querySelectorAll('[id="' + SELECTORS.inputBoxId + '"]');
-      let mainFound = false;
-      let sideFound = false;
+      const mainEntries = [];
+      const sideEntries = [];
       for (let i = 0; i < boxes.length; i++) {
         const box = boxes[i];
         const sideContent = box.closest ? box.closest('[data-testid="side-question-tab-content"]') : null;
@@ -105,26 +172,35 @@
           sideContent || (box.closest && box.closest('[data-testid="side-question-tab-composer"]'))
         );
         if (inSide) {
-          if (sideFound) continue;
-          sideFound = true;
-          panes.push({
-            key: 'side',
-            pillId: 'ag-side-metrics-pill',
-            inputBox: box,
-            container: sideContent || box.parentElement || document,
-            cid: extractSideCascadeId(sideContent)
-          });
+          const container = sideContent || box.parentElement || document;
+          if (isPaneElementHidden(box) || (sideContent && isPaneElementHidden(sideContent))) continue;
+          sideEntries.push({ box, sideContent, container });
         } else {
-          if (mainFound) continue;
-          mainFound = true;
-          panes.push({
-            key: 'main',
-            pillId: 'ag-live-metrics-pill',
-            inputBox: box,
-            container: (box.closest && box.closest('[data-testid="conversation-view"]')) || document,
-            cid: extractCascadeId()
-          });
+          const convView = box.closest ? box.closest('[data-testid="conversation-view"]') : null;
+          if (isPaneElementHidden(box) || (convView && isPaneElementHidden(convView))) continue;
+          mainEntries.push({ box, convView });
         }
+      }
+      const allowGlobalFallback = mainEntries.length === 1;
+      for (let i = 0; i < mainEntries.length; i++) {
+        const { box, convView } = mainEntries[i];
+        panes.push({
+          key: i === 0 ? 'main' : 'main-' + i,
+          pillId: i === 0 ? 'ag-live-metrics-pill' : 'ag-live-metrics-pill-' + i,
+          inputBox: box,
+          container: convView || document,
+          cid: extractMainPaneCascadeId(box, convView, allowGlobalFallback)
+        });
+      }
+      for (let i = 0; i < sideEntries.length; i++) {
+        const { box, sideContent, container } = sideEntries[i];
+        panes.push({
+          key: i === 0 ? 'side' : 'side-' + i,
+          pillId: i === 0 ? 'ag-side-metrics-pill' : 'ag-side-metrics-pill-' + i,
+          inputBox: box,
+          container,
+          cid: extractSideCascadeId(sideContent, box)
+        });
       }
     } catch (e) {}
     return panes;
@@ -144,9 +220,22 @@
       const s = String(id || '').trim();
       if (AG_UUID_RE.test(s) && !out.includes(s)) out.push(s);
     };
-    add(extractCascadeId());
+    const panes = discoverConversationPanes();
+    for (let i = 0; i < panes.length; i++) {
+      add(panes[i].cid);
+    }
+    try {
+      document.querySelectorAll('[data-testid="conversation-view"]').forEach((cv) => {
+        if (isPaneElementHidden(cv)) return;
+        add(cv.getAttribute('data-cascade-id') || cv.getAttribute('data-quotable-pane-cascade-id'));
+      });
+    } catch (e) {}
+    if (out.length === 0) {
+      add(extractCascadeId());
+    }
     try {
       document.querySelectorAll('[data-testid="side-question-tab-content"]').forEach((sc) => {
+        if (isPaneElementHidden(sc)) return;
         add(extractSideCascadeId(sc));
       });
     } catch (e) {}
@@ -256,7 +345,9 @@
         }
         const ownerKey = window.__ag_tt_owner_pane || 'main';
         const ownerPane = getPaneByKey(ownerKey);
-        const pill = document.getElementById(ownerKey === 'side' ? 'ag-side-metrics-pill' : 'ag-live-metrics-pill');
+        const pill = ownerPane
+          ? document.getElementById(ownerPane.pillId)
+          : document.getElementById(ownerKey === 'side' ? 'ag-side-metrics-pill' : 'ag-live-metrics-pill');
         if (pill) positionMetricsTooltip(pill, tt, ownerPane ? ownerPane.inputBox : null);
       });
     }
@@ -270,11 +361,17 @@
     const cid = pane ? pane.cid : paneKey === 'main' ? extractCascadeId() : '';
     const m = cid ? metricsByCid[cid] : null;
     if (!m || !m.tooltipHtml) return null;
+    const ownerChanged = window.__ag_tt_owner_pane !== paneKey;
     window.__ag_tt_owner_pane = paneKey;
     tt.setAttribute('data-ag-owner-pane', paneKey);
     if (tt.getAttribute('data-ag-raw-tt') !== m.tooltipHtml) {
       tt.setAttribute('data-ag-raw-tt', m.tooltipHtml);
       tt.innerHTML = m.tooltipHtml;
+      if (typeof window.__ag_quota_decorate_tt === 'function') {
+        window.__ag_quota_decorate_tt(tt, pane ? pane.inputBox : null);
+      }
+    } else if (ownerChanged && typeof window.__ag_quota_decorate_tt === 'function') {
+      window.__ag_quota_decorate_tt(tt, pane ? pane.inputBox : null);
     }
     const ps = paneStates[paneKey];
     if (ps && ps.lastSnap) {
@@ -389,7 +486,30 @@
     const { row, leftGroup, rightGroup } = ctx;
     const ps = getOrCreatePaneState(paneKey);
 
-    let pill = document.getElementById(pillId);
+    let pill =
+      (inputBox.querySelector && inputBox.querySelector('.ag-live-metrics-pill')) ||
+      document.getElementById(pillId);
+    if (pill && !inputBox.contains(pill)) {
+      const pillOwnerBox = pill.closest ? pill.closest('[id="' + SELECTORS.inputBoxId + '"]') : null;
+      if (pillOwnerBox && pillOwnerBox !== inputBox) {
+        pill = null;
+      }
+    }
+    if (pill) {
+      if (pill.id !== pillId) pill.id = pillId;
+      if (pill.getAttribute('data-ag-pane') !== paneKey) {
+        pill.setAttribute('data-ag-pane', paneKey);
+      }
+      const existingTextEl = pill.querySelector ? pill.querySelector('.ag-live-metrics-text') : null;
+      if (existingTextEl) {
+        if (paneKey === 'main') {
+          if (existingTextEl.id !== 'ag-live-metrics-text') existingTextEl.id = 'ag-live-metrics-text';
+        } else if (existingTextEl.id) {
+          existingTextEl.id = '';
+          existingTextEl.removeAttribute('id');
+        }
+      }
+    }
     if (!pill) {
       pill = document.createElement('div');
       pill.id = pillId;
@@ -407,21 +527,27 @@
       }
 
       pill.addEventListener('mouseenter', () => {
+        const curKey = pill.getAttribute('data-ag-pane') || 'main';
         if (window.__ag_tt_hide_timer) {
           clearTimeout(window.__ag_tt_hide_timer);
           window.__ag_tt_hide_timer = null;
         }
-        if (window.__ag_tt_pinned && window.__ag_tt_owner_pane && window.__ag_tt_owner_pane !== paneKey) {
+        if (window.__ag_tt_pinned && window.__ag_tt_owner_pane && window.__ag_tt_owner_pane !== curKey) {
           return;
         }
         if (window.__ag_tt_show_timer) clearTimeout(window.__ag_tt_show_timer);
         window.__ag_tt_show_timer = setTimeout(() => {
-          const res = hydrateTooltipForPane(paneKey);
+          const liveKey = pill.getAttribute('data-ag-pane') || 'main';
+          const res = hydrateTooltipForPane(liveKey);
           if (!res || !res.tt || !res.tt.innerHTML.trim()) return;
           if (res.tt.getAttribute('data-visible') !== '1') {
             window.__ag_tt_hover_opened_at = Date.now();
           }
-          positionMetricsTooltip(pill, res.tt, res.pane ? res.pane.inputBox : inputBox);
+          const ownerBox =
+            (res.pane && res.pane.inputBox) ||
+            (pill.closest && pill.closest('[id="' + SELECTORS.inputBoxId + '"]')) ||
+            null;
+          positionMetricsTooltip(pill, res.tt, ownerBox);
           res.tt.setAttribute('data-visible', '1');
         }, 85);
       });
@@ -452,16 +578,17 @@
           clearTimeout(window.__ag_tt_hide_timer);
           window.__ag_tt_hide_timer = null;
         }
+        const curKey = pill.getAttribute('data-ag-pane') || 'main';
         const prevOwner = window.__ag_tt_owner_pane || '';
-        const res = hydrateTooltipForPane(paneKey);
+        const res = hydrateTooltipForPane(curKey);
         if (!res || !res.tt || !res.tt.innerHTML.trim()) return;
         const tt = res.tt;
         const isVisible = tt.getAttribute('data-visible') === '1';
         const isExpanded = tt.getAttribute('data-expanded') === '1';
-        const switchedOwner = prevOwner && prevOwner !== paneKey;
+        const switchedOwner = prevOwner && prevOwner !== curKey;
 
         if (!isVisible || !window.__ag_tt_pinned || switchedOwner) {
-          // 1st click (or switching from the other pane): open & pin L1 summary panel
+          // 1st click (or switching from another pane): open & pin L1 summary panel
           tt.removeAttribute('data-expanded');
           tt.setAttribute('data-visible', '1');
           window.__ag_tt_pinned = true;
@@ -479,7 +606,11 @@
           window.__ag_tt_hover_opened_at = 0;
         }
         if (tt.getAttribute('data-visible') === '1') {
-          positionMetricsTooltip(pill, tt, res.pane ? res.pane.inputBox : inputBox);
+          const ownerBox =
+            (res.pane && res.pane.inputBox) ||
+            (pill.closest && pill.closest('[id="' + SELECTORS.inputBoxId + '"]')) ||
+            null;
+          positionMetricsTooltip(pill, tt, ownerBox);
         }
       });
     }
@@ -504,9 +635,9 @@
     const isDetailed =
       boot.telemetryLayout === 'detailed' ||
       Boolean(boot.userConfig && boot.userConfig.telemetryLayout === 'detailed');
-    const neededWidth = measuredTextWidth > 24 ? measuredTextWidth + 20 : 204;
+    const neededWidth = measuredTextWidth > 24 ? measuredTextWidth + 20 : isDetailed ? 320 : 204;
     const threshold = prevMode === 'middle' ? Math.max(168, neededWidth) : Math.max(202, neededWidth + 24);
-    const mode = !isDetailed && rowWidth > 0 && freeWidth >= threshold ? 'middle' : 'bottom';
+    const mode = rowWidth > 0 && freeWidth >= threshold ? 'middle' : 'bottom';
     const sig = mode + ':' + Math.round(rowWidth / 8) + ':' + Math.round(neededWidth / 16);
 
     const isMountedCorrectly =
@@ -552,8 +683,8 @@
           if (!curPane) return;
           ensureMetricsPillForPane(curPane, false, false);
           const tt = document.getElementById('ag-live-metrics-tooltip');
-          const p = document.getElementById(pillId);
-          if (tt && p && tt.getAttribute('data-visible') === '1' && (window.__ag_tt_owner_pane || 'main') === paneKey) {
+          const p = document.getElementById(curPane.pillId);
+          if (tt && p && tt.getAttribute('data-visible') === '1' && (window.__ag_tt_owner_pane || 'main') === curPane.key) {
             positionMetricsTooltip(p, tt, curPane.inputBox);
           }
         };
@@ -571,10 +702,58 @@
 
   function pruneStalePills(activePanes) {
     const activeKeys = new Set(activePanes.map((p) => p.key));
-    for (const [k, pid] of [['main', 'ag-live-metrics-pill'], ['side', 'ag-side-metrics-pill']]) {
+    const activeBoxToPane = new Map();
+    for (let i = 0; i < activePanes.length; i++) {
+      if (activePanes[i] && activePanes[i].inputBox) {
+        activeBoxToPane.set(activePanes[i].inputBox, activePanes[i]);
+      }
+    }
+
+    try {
+      const claimedBoxes = new Set();
+      const keptPills = [];
+      const allPills = document.querySelectorAll('.ag-live-metrics-pill, #ag-live-metrics-pill, #ag-side-metrics-pill');
+      for (let i = 0; i < allPills.length; i++) {
+        const el = allPills[i];
+        const ownerBox = el.closest ? el.closest('[id="' + SELECTORS.inputBoxId + '"]') : null;
+        const ownerPane = ownerBox ? activeBoxToPane.get(ownerBox) : null;
+        if (!ownerPane || claimedBoxes.has(ownerBox)) {
+          el.remove();
+          continue;
+        }
+        claimedBoxes.add(ownerBox);
+        keptPills.push({ el, pane: ownerPane });
+      }
+      for (let i = 0; i < keptPills.length; i++) {
+        const { el, pane } = keptPills[i];
+        if (el.id !== pane.pillId) {
+          el.id = '';
+          el.removeAttribute('id');
+        }
+      }
+      for (let i = 0; i < keptPills.length; i++) {
+        const { el, pane } = keptPills[i];
+        if (el.id !== pane.pillId) el.id = pane.pillId;
+        if (el.getAttribute('data-ag-pane') !== pane.key) {
+          el.setAttribute('data-ag-pane', pane.key);
+        }
+        const textEl = el.querySelector ? el.querySelector('.ag-live-metrics-text') : null;
+        if (textEl) {
+          if (pane.key === 'main') {
+            if (textEl.id !== 'ag-live-metrics-text') textEl.id = 'ag-live-metrics-text';
+          } else if (textEl.id) {
+            textEl.id = '';
+            textEl.removeAttribute('id');
+          }
+        }
+      }
+    } catch (e) {}
+
+    const staleKeys = new Set(Object.keys(paneStates));
+    staleKeys.add('main');
+    staleKeys.add('side');
+    for (const k of staleKeys) {
       if (activeKeys.has(k)) continue;
-      const stale = document.getElementById(pid);
-      if (stale) stale.remove();
       const ps = paneStates[k];
       if (ps) {
         if (ps.roRaf && typeof cancelAnimationFrame === 'function') {
@@ -586,9 +765,7 @@
           ps.ro = null;
           ps.roObserved = null;
         }
-        ps.cid = '';
-        ps.layoutSig = '';
-        ps.rowMode = '';
+        delete paneStates[k];
       }
       if ((window.__ag_tt_owner_pane || '') === k) {
         window.__ag_tt_pinned = false;
@@ -695,7 +872,9 @@
     const routeVisible =
       isMetricsRouteActive(pane) || snap.visualState === 'error' || snap.visualState === 'slow' || snap.isExecuting;
 
-    let pill = document.getElementById(pillId);
+    let pill =
+      (inputBox && inputBox.querySelector && inputBox.querySelector('.ag-live-metrics-pill')) ||
+      document.getElementById(pillId);
     if (routeVisible && !pill) {
       pill = ensureMetricsPillForPane(pane, false, false);
     }
@@ -1170,7 +1349,7 @@
       for (let i = 0; i < mutations.length; i++) {
         const m = mutations[i];
         if (m.type === 'attributes') {
-          if (m.attributeName === 'data-cascade-id') {
+          if (m.attributeName === 'data-cascade-id' || m.attributeName === 'data-quotable-pane-cascade-id') {
             hitPane = true;
             break;
           }
@@ -1184,11 +1363,14 @@
             const tid = n.getAttribute ? n.getAttribute('data-testid') || '' : '';
             if (
               n.id === SELECTORS.inputBoxId ||
+              tid === 'conversation-view' ||
               tid === 'side-question-tab-content' ||
               tid === 'side-question-tab-composer' ||
               tid === 'side-question-tab-conversation' ||
               (n.querySelector &&
-                n.querySelector('[data-testid="side-question-tab-content"], [id="' + SELECTORS.inputBoxId + '"]'))
+                n.querySelector(
+                  '[data-testid="conversation-view"], [data-testid="side-question-tab-content"], [id="' + SELECTORS.inputBoxId + '"]'
+                ))
             ) {
               hitPane = true;
               return;
@@ -1216,7 +1398,7 @@
         childList: true,
         subtree: true,
         attributes: true,
-        attributeFilter: ['data-cascade-id']
+        attributeFilter: ['data-cascade-id', 'data-quotable-pane-cascade-id']
       });
     } catch (e) {}
   }
@@ -1254,6 +1436,9 @@
         if (tt && tt.getAttribute('data-ag-raw-tt') !== payload.tooltipHtml) {
           tt.setAttribute('data-ag-raw-tt', payload.tooltipHtml);
           tt.innerHTML = payload.tooltipHtml;
+          if (typeof window.__ag_quota_decorate_tt === 'function') {
+            window.__ag_quota_decorate_tt(tt, pane.inputBox);
+          }
           if (pill && tt.getAttribute('data-visible') === '1') {
             positionMetricsTooltip(pill, tt, pane.inputBox);
           }
@@ -1312,7 +1497,9 @@
           const scopeRoot = pane.container && pane.container.querySelectorAll ? pane.container : document;
           scopeRoot.querySelectorAll('.ag-turn-metrics').forEach((el) => el.remove());
         } catch (e) {}
-        const pill = document.getElementById(pane.pillId);
+        const pill =
+          (pane.inputBox && pane.inputBox.querySelector && pane.inputBox.querySelector('.ag-live-metrics-pill')) ||
+          document.getElementById(pane.pillId);
         const textEl = pill && pill.querySelector('.ag-live-metrics-text');
         if (textEl) {
           const cachedM = pane.cid ? metricsByCid[pane.cid] : null;

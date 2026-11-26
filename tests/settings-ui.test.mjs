@@ -397,7 +397,7 @@ test('60-i18n-engine handles Antigravity 2.35.1 sentence-case labels, Thinking f
     NodeFilter: { SHOW_ELEMENT: 1, SHOW_TEXT: 4, FILTER_ACCEPT: 1, FILTER_REJECT: 2, FILTER_SKIP: 3 },
     MutationObserver: class { observe() {} disconnect() {} },
     __AG_BOOT_PAYLOAD__: {
-      version: '1.3.5-test',
+      version: '1.4.0-test',
       platform: 'darwin',
       enabled: true,
       cssText: '',

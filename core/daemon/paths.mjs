@@ -15,7 +15,7 @@ export const CORE_DIR = path.join(ROOT_DIR, 'core');
 export const STYLES_DIR = path.join(CORE_DIR, 'styles');
 export const RUNTIME_DIR = path.join(CORE_DIR, 'runtime');
 export const USER_DIR = path.join(ROOT_DIR, 'user');
-export const BASE_VERSION = '1.3.5';
+export const BASE_VERSION = '1.4.0';
 
 export function parseDaemonCliArgs(argv = process.argv.slice(2)) {
   const hasFlag = (f) => argv.some((a) => a === f || a.startsWith(f + '='));
@@ -153,6 +153,8 @@ const EDITABLE_MODULE_KEYS = new Set([
   'theme',
   'i18n',
   'metrics',
+  'quota',
+  'quotaSidebar',
   'promptSuggestions',
   'sshRemote',
   'deadlockHealer',
@@ -161,8 +163,33 @@ const EDITABLE_MODULE_KEYS = new Set([
   'customCss',
   'customJs'
 ]);
+const VALID_QUOTA_STYLES = new Set(['segments', 'bar', 'rings', 'gauge', 'dots', 'compact']);
+const VALID_QUOTA_OTHER_STYLES = new Set(['lines', 'text', 'segments', 'rings', 'rows', 'hidden']);
+const VALID_FONT_MODES = new Set(['global', 'split']);
 const VALID_SSH_HOST_RE = /^[a-zA-Z0-9_@][a-zA-Z0-9._:@-]{0,127}$/;
 const VALID_SUGGEST_MODEL_RE = /^[a-zA-Z0-9._:/-]{2,80}$/;
+
+function sanitizeFontField(raw) {
+  let s = String(raw || '')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/[;{}<>@\\]/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .trim();
+  if (!s || /(?:url\s*\(|expression\s*\(|import\b)/i.test(s)) return '';
+  if (s.length > 240) s = s.slice(0, 240).trim();
+  return s;
+}
+
+export function normalizeFontsConfig(raw) {
+  const src = raw && typeof raw === 'object' ? raw : {};
+  return {
+    mode: VALID_FONT_MODES.has(src.mode) ? src.mode : 'global',
+    global: sanitizeFontField(src.global),
+    ui: sanitizeFontField(src.ui),
+    chat: sanitizeFontField(src.chat),
+    code: sanitizeFontField(src.code)
+  };
+}
 
 export function sanitizeConfigPatch(currentCfg, patch) {
   const base = currentCfg && typeof currentCfg === 'object' ? JSON.parse(JSON.stringify(currentCfg)) : {};
@@ -183,6 +210,25 @@ export function sanitizeConfigPatch(currentCfg, patch) {
   }
   if (patch.telemetryCacheMode === 'session' || patch.telemetryCacheMode === 'step') {
     base.telemetryCacheMode = patch.telemetryCacheMode;
+  }
+  if (VALID_QUOTA_STYLES.has(patch.quotaStyle)) {
+    base.quotaStyle = patch.quotaStyle;
+  }
+  if (VALID_QUOTA_OTHER_STYLES.has(patch.quotaOtherStyle)) {
+    base.quotaOtherStyle = patch.quotaOtherStyle;
+  }
+  if (patch.fonts && typeof patch.fonts === 'object') {
+    const prev = normalizeFontsConfig(base.fonts);
+    const next = { ...prev };
+    if (VALID_FONT_MODES.has(patch.fonts.mode)) {
+      next.mode = patch.fonts.mode;
+    }
+    for (const k of ['global', 'ui', 'chat', 'code']) {
+      if (typeof patch.fonts[k] === 'string') {
+        next[k] = sanitizeFontField(patch.fonts[k]);
+      }
+    }
+    base.fonts = next;
   }
   if (typeof patch.promptSuggestionModel === 'string') {
     const m = patch.promptSuggestionModel.trim();
@@ -216,6 +262,9 @@ export function createBundleController({ safeMode = false, cliChannel = null, ha
     preset: 'codex-pure-white',
     telemetryLayout: 'compact',
     telemetryCacheMode: 'session',
+    quotaStyle: 'segments',
+    quotaOtherStyle: 'lines',
+    fonts: { mode: 'global', global: '', ui: '', chat: '', code: '' },
     contextLimit: 'auto',
     manualContextLimit: 0,
     fallbackContextLimit: 256000,
@@ -224,6 +273,8 @@ export function createBundleController({ safeMode = false, cliChannel = null, ha
       theme: true,
       i18n: true,
       metrics: Boolean(hasSqlite),
+      quota: true,
+      quotaSidebar: true,
       sshRemote: false,
       promptSuggestions: false,
       deadlockHealer: true,
@@ -269,6 +320,9 @@ export function createBundleController({ safeMode = false, cliChannel = null, ha
     const preset = presetRaw === 'codex-dark' || presetRaw === 'onyx-dark' ? 'codex-dark' : 'codex-pure-white';
     const telemetryLayout = userCfg.telemetryLayout === 'detailed' ? 'detailed' : 'compact';
     const telemetryCacheMode = userCfg.telemetryCacheMode === 'step' ? 'step' : 'session';
+    const quotaStyle = VALID_QUOTA_STYLES.has(userCfg.quotaStyle) ? userCfg.quotaStyle : 'segments';
+    const quotaOtherStyle = VALID_QUOTA_OTHER_STYLES.has(userCfg.quotaOtherStyle) ? userCfg.quotaOtherStyle : 'lines';
+    const fonts = normalizeFontsConfig(safeMode ? {} : userCfg.fonts);
 
     const rawContextLimit = userCfg.contextLimit;
     const isAutoLimit =
@@ -290,6 +344,8 @@ export function createBundleController({ safeMode = false, cliChannel = null, ha
         theme: true,
         i18n: true,
         metrics: true,
+        quota: true,
+        quotaSidebar: true,
         sshRemote: false,
         promptSuggestions: false,
         deadlockHealer: true,
@@ -309,6 +365,7 @@ export function createBundleController({ safeMode = false, cliChannel = null, ha
     const hasMetricsFiles =
       fs.existsSync(path.join(RUNTIME_DIR, '50-telemetry-ui.js')) &&
       fs.existsSync(path.join(CORE_DIR, 'daemon', 'sqlite-metrics.mjs'));
+    const hasQuotaFiles = fs.existsSync(path.join(RUNTIME_DIR, '55-quota-ui.js'));
     const hasPromptSuggestFiles =
       fs.existsSync(path.join(RUNTIME_DIR, '70-prompt-suggestions.js')) &&
       fs.existsSync(path.join(CORE_DIR, 'daemon', 'prompt-suggest.mjs'));
@@ -318,6 +375,10 @@ export function createBundleController({ safeMode = false, cliChannel = null, ha
     if (!hasSqlite || !hasMetricsFiles) {
       modules.metrics = false;
       modules.sshRemote = false;
+    }
+    if (!hasQuotaFiles) {
+      modules.quota = false;
+      modules.quotaSidebar = false;
     }
     if (!hasPromptSuggestFiles) modules.promptSuggestions = false;
     if (!hasGuardsFile) {
@@ -359,6 +420,9 @@ export function createBundleController({ safeMode = false, cliChannel = null, ha
       preset,
       telemetryLayout,
       telemetryCacheMode,
+      quotaStyle,
+      quotaOtherStyle,
+      fonts,
       contextLimit,
       manualContextLimit,
       fallbackContextLimit,
@@ -374,6 +438,7 @@ export function createBundleController({ safeMode = false, cliChannel = null, ha
     const activeStyleFiles = styleFiles.filter((filePath) => {
       const base = path.basename(filePath);
       if (base === '30-telemetry.css') return Boolean(modules.metrics);
+      if (base === '35-quota.css') return Boolean(modules.quota);
       if (base === '40-prompt-suggestions.css') return Boolean(modules.promptSuggestions);
       if (base === '45-settings-ui.css') return Boolean(enabled);
       return modules.theme !== false;
@@ -400,6 +465,9 @@ export function createBundleController({ safeMode = false, cliChannel = null, ha
           preset,
           telemetryLayout,
           telemetryCacheMode,
+          quotaStyle,
+          quotaOtherStyle,
+          fonts,
           promptSuggestionModel,
           sshHosts: activeConfig.sshHosts,
           modules,
@@ -420,6 +488,9 @@ export function createBundleController({ safeMode = false, cliChannel = null, ha
       preset,
       telemetryLayout,
       telemetryCacheMode,
+      quotaStyle,
+      quotaOtherStyle,
+      fonts,
       cssText: baseCss,
       customCss,
       themeVars,
@@ -432,6 +503,9 @@ export function createBundleController({ safeMode = false, cliChannel = null, ha
         preset,
         telemetryLayout,
         telemetryCacheMode,
+        quotaStyle,
+        quotaOtherStyle,
+        fonts,
         contextLimit,
         promptSuggestionModel,
         sshHosts: activeConfig.sshHosts,
@@ -484,4 +558,173 @@ export function createBundleController({ safeMode = false, cliChannel = null, ha
       cachedPatchVersion
     })
   };
+}
+
+export function readSfntFontMeta(filePath) {
+  let fd;
+  try {
+    fd = fs.openSync(filePath, 'r');
+  } catch {
+    return [];
+  }
+  try {
+    const hdr = Buffer.alloc(16);
+    if (fs.readSync(fd, hdr, 0, 16, 0) < 12) return [];
+    const tag0 = hdr.toString('ascii', 0, 4);
+    const offsets = [];
+    if (tag0 === 'ttcf') {
+      const count = Math.min(hdr.readUInt32BE(8), 16);
+      const offBuf = Buffer.alloc(count * 4);
+      if (fs.readSync(fd, offBuf, 0, offBuf.length, 12) < offBuf.length) return [];
+      for (let i = 0; i < count; i++) offsets.push(offBuf.readUInt32BE(i * 4));
+    } else if (tag0 === 'OTTO' || tag0 === 'true' || hdr.readUInt32BE(0) === 0x00010000) {
+      offsets.push(0);
+    } else {
+      return [];
+    }
+
+    const results = [];
+    for (const sfntOff of offsets) {
+      const sh = Buffer.alloc(12);
+      if (fs.readSync(fd, sh, 0, 12, sfntOff) < 12) continue;
+      const numTables = Math.min(sh.readUInt16BE(4), 128);
+      const tblBuf = Buffer.alloc(numTables * 16);
+      if (fs.readSync(fd, tblBuf, 0, tblBuf.length, sfntOff + 12) < tblBuf.length) continue;
+
+      let nameTbl = null;
+      let postTbl = null;
+      for (let i = 0; i < numTables; i++) {
+        const t = tblBuf.toString('ascii', i * 16, i * 16 + 4);
+        const off = tblBuf.readUInt32BE(i * 16 + 8);
+        const len = tblBuf.readUInt32BE(i * 16 + 12);
+        if (t === 'name') nameTbl = { off, len };
+        else if (t === 'post') postTbl = { off, len };
+      }
+      if (!nameTbl || nameTbl.len < 6 || nameTbl.len > 524288) continue;
+
+      let isMono = false;
+      if (postTbl && postTbl.len >= 16) {
+        const pb = Buffer.alloc(16);
+        if (fs.readSync(fd, pb, 0, 16, postTbl.off) >= 16) {
+          isMono = pb.readUInt32BE(12) !== 0;
+        }
+      }
+
+      const nb = Buffer.alloc(nameTbl.len);
+      if (fs.readSync(fd, nb, 0, nameTbl.len, nameTbl.off) < 6) continue;
+      const count = nb.readUInt16BE(2);
+      const strOff = nb.readUInt16BE(4);
+      let prefEn = '';
+      let famEn = '';
+      let prefAny = '';
+      let famAny = '';
+      for (let i = 0; i < count; i++) {
+        const r = 6 + i * 12;
+        if (r + 12 > nb.length) break;
+        const plat = nb.readUInt16BE(r);
+        const enc = nb.readUInt16BE(r + 2);
+        const lang = nb.readUInt16BE(r + 4);
+        const nameId = nb.readUInt16BE(r + 6);
+        if (nameId !== 1 && nameId !== 16) continue;
+        const len = nb.readUInt16BE(r + 8);
+        const off = strOff + nb.readUInt16BE(r + 10);
+        if (off + len > nb.length || len === 0 || len > 256) continue;
+        let val = '';
+        if (plat === 3 || plat === 0) {
+          for (let p = 0; p + 1 < len; p += 2) val += String.fromCharCode(nb.readUInt16BE(off + p));
+        } else if (plat === 1 && enc === 0) {
+          val = nb.toString('latin1', off, off + len);
+        }
+        val = val.replace(/\0/g, '').trim();
+        if (!val || val.startsWith('.')) continue;
+        const isEn = (plat === 3 && lang === 0x0409) || (plat === 1 && lang === 0) || plat === 0;
+        if (nameId === 16) {
+          if (isEn && !prefEn) prefEn = val;
+          else if (!prefAny) prefAny = val;
+        } else {
+          if (isEn && !famEn) famEn = val;
+          else if (!famAny) famAny = val;
+        }
+      }
+      const family = prefEn || famEn || prefAny || famAny;
+      if (family) results.push({ family, isMono });
+    }
+    return results;
+  } catch {
+    return [];
+  } finally {
+    try {
+      fs.closeSync(fd);
+    } catch {}
+  }
+}
+
+let cachedUserFonts = null;
+let cachedUserFontsAt = 0;
+
+export function scanUserInstalledFonts({ dirs = null, force = false } = {}) {
+  const now = Date.now();
+  if (!dirs && !force && cachedUserFonts && now - cachedUserFontsAt < 60000) {
+    return cachedUserFonts;
+  }
+
+  const home = os.homedir();
+  const scanDirs = Array.isArray(dirs)
+    ? dirs
+    : process.platform === 'darwin'
+    ? [path.join(home, 'Library', 'Fonts'), '/Library/Fonts']
+    : process.platform === 'win32'
+    ? [path.join(process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local'), 'Microsoft', 'Windows', 'Fonts')]
+    : [path.join(home, '.local', 'share', 'fonts'), path.join(home, '.fonts')];
+
+  const sansMap = new Map();
+  const monoMap = new Map();
+  let scannedFiles = 0;
+  const MAX_FILES = 400;
+
+  const walk = (dirPath, depth) => {
+    if (depth > 2 || scannedFiles >= MAX_FILES) return;
+    let entries;
+    try {
+      entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (scannedFiles >= MAX_FILES) break;
+      if (!entry.name || entry.name.startsWith('.')) continue;
+      const full = path.join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        walk(full, depth + 1);
+      } else if (/\.(ttf|otf|ttc|otc)$/i.test(entry.name)) {
+        scannedFiles += 1;
+        const metas = readSfntFontMeta(full);
+        for (const m of metas) {
+          const clean = sanitizeFontField(m.family);
+          if (!clean) continue;
+          const key = clean.toLowerCase();
+          if (m.isMono || /\bmono\b|\bcode\b|\bnerd\b|\bterm\b/i.test(clean)) {
+            if (!monoMap.has(key)) monoMap.set(key, clean);
+          } else {
+            if (!sansMap.has(key)) sansMap.set(key, clean);
+          }
+        }
+      }
+    }
+  };
+
+  for (const d of scanDirs) {
+    if (d) walk(d, 0);
+  }
+
+  const result = {
+    sans: Array.from(sansMap.values()).sort((a, b) => a.localeCompare(b)),
+    mono: Array.from(monoMap.values()).sort((a, b) => a.localeCompare(b))
+  };
+
+  if (!dirs) {
+    cachedUserFonts = result;
+    cachedUserFontsAt = now;
+  }
+  return result;
 }

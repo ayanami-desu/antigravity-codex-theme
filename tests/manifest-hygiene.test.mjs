@@ -72,6 +72,10 @@ test('Assembled runtime JS and CSS parts pass syntax validation and define Codex
     /\.ag-turn-metrics\s*\{[^}]*margin-right:\s*auto/i.test(css),
     'Per-turn metrics badge must push native copy/thumbs/time controls to the right edge'
   );
+  assert.ok(
+    /div\[data-ag-row-mode\]\s*>\s*div:first-child\s*\{[^}]*overflow:\s*visible/i.test(css),
+    'Composer footer left group must keep overflow: visible so model selector focus rings are not clipped (Issue #10)'
+  );
 
   // Enforce concentric composer tray & inner card corner geometry (outerRadius = innerRadius + outerPadding + outerBorder)
   for (const styleFile of ['00-base.css', '20-dark-codex.css']) {

@@ -271,7 +271,7 @@ export function ensureCdpLaunchers(channel = 'auto', options = {}) {
           '  <key>CFBundlePackageType</key>',
           '  <string>APPL</string>',
           '  <key>CFBundleShortVersionString</key>',
-          '  <string>1.3.5</string>',
+          '  <string>1.4.0</string>',
           '  <key>CFBundleVersion</key>',
           '  <string>110</string>',
           ...(iconBase ? ['  <key>CFBundleIconFile</key>', `  <string>${iconBase}</string>`] : []),

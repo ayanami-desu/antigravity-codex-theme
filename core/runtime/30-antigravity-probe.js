@@ -11,6 +11,8 @@
       .replace(/^模型(?:选择器)?(?:[，,]\s*当前)?[：:]\s*/, '')
       .trim();
     s = s
+      .replace(/\.\s+(?:Applies\s+to|Model\s+cannot|Cannot\s+be|Disabled|Locked)[\s\S]*$/i, '')
+      .replace(/[。.]\s*(?:适用于|智能体运行期间|会话中途无法)[\s\S]*$/, '')
       .replace(/,\s*(?:Model\s+cannot\s+be\s+changed|Cannot\s+be\s+changed|Disabled|Locked)[\s\S]*$/i, '')
       .replace(
         /\s*[（(]\s*(?:Model\s+cannot\s+be\s+changed|Cannot\s+be\s+changed|智能体运行期间无法切换模型|会话中途无法更改)[^）)]*[）)]\s*$/i,

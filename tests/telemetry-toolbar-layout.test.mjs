@@ -58,6 +58,7 @@ class FakeElement {
     this._scrollWidth = typeof opts.scrollWidth === 'number' ? opts.scrollWidth : 0;
     this._innerHTML = '';
     this.textContent = opts.textContent || '';
+    this._listeners = new Map();
     this.classList = new FakeClassList(this);
   }
 
@@ -188,8 +189,20 @@ class FakeElement {
     this.attrs.delete(k);
   }
 
-  addEventListener() {}
-  removeEventListener() {}
+  addEventListener(type, fn) {
+    if (!this._listeners.has(type)) this._listeners.set(type, []);
+    this._listeners.get(type).push(fn);
+  }
+  removeEventListener(type, fn) {
+    const list = this._listeners.get(type);
+    if (!list) return;
+    const idx = list.indexOf(fn);
+    if (idx !== -1) list.splice(idx, 1);
+  }
+  dispatchEvent(evt) {
+    const list = this._listeners.get(evt.type) || [];
+    for (const fn of list.slice()) fn(evt);
+  }
 
   getBoundingClientRect() {
     return {
@@ -382,7 +395,9 @@ function mountTelemetryBundle(dom, bootOverrides = {}) {
   };
 
   let roCallback = null;
+  const roInstances = [];
   let rafQueue = [];
+  const requestedMetricsSigs = [];
   const bootPayload = Object.assign(
     {
       version: 'test',
@@ -414,9 +429,20 @@ function mountTelemetryBundle(dom, bootOverrides = {}) {
     ResizeObserver: class {
       constructor(cb) {
         roCallback = cb;
+        this.cb = cb;
+        this.observed = [];
+        this.disconnected = false;
+        roInstances.push(this);
       }
-      observe() {}
-      disconnect() {}
+      observe(el) {
+        this.observed.push(el);
+      }
+      disconnect() {
+        this.disconnected = true;
+      }
+    },
+    __agRequestMetrics: (sig) => {
+      requestedMetricsSigs.push(sig);
     },
     __ag_boot: bootPayload
   };
@@ -456,6 +482,8 @@ function mountTelemetryBundle(dom, bootOverrides = {}) {
   return {
     win: fakeWindow,
     doc: fakeDocument,
+    roInstances,
+    requestedMetricsSigs,
     triggerResize: () => {
       if (roCallback) roCallback();
       flushRaf();
@@ -530,14 +558,14 @@ test('Structural fallback skips inner flex-row wrappers even if canonical footer
   }
 });
 
-test('Detailed mode always mounts in dedicated centered bottom row while compact mode adapts with hysteresis', () => {
+test('Both detailed and compact modes adapt dynamically between inline middle and bottom row with hysteresis', () => {
   const dom = buildComposerDom({ withExplicitFooter: true, boxWidth: 960, footerWidth: 946, modelWidth: 174, rightWidth: 256 });
   const env = mountTelemetryBundle(dom, { telemetryLayout: 'detailed' });
 
   env.win.__ag_on_route_change();
   const pill = env.doc.getElementById('ag-live-metrics-pill');
   const textEl = pill.querySelector('.ag-live-metrics-text');
-  textEl.scrollWidth = 316;
+  textEl.scrollWidth = 316; // neededWidth = 336, enter-middle = 360
 
   env.win.__ag_render_metrics({
     cid: dom.cid,
@@ -546,11 +574,32 @@ test('Detailed mode always mounts in dedicated centered bottom row while compact
     tooltipHtml: '<div>ok</div>'
   });
 
-  // Detailed mode stays consistently in the dedicated bottom row even on a wide composer
+  // Wide composer: freeWidth = 946 - 202 - 256 - 16 = 472 >= 360 -> stays inline in middle
+  assert.equal(pill.getAttribute('data-ag-row-mode'), 'middle');
+  assert.equal(dom.footer.getAttribute('data-ag-row-mode'), 'middle');
+  assert.equal(pill.parentElement, dom.leftGroup, 'detailed mode should stay inline when composer has enough width');
+
+  // Narrower composer: freeWidth = 754 - 202 - 256 - 16 = 280 < 336 -> dynamically wraps to bottom row
+  dom.inputBox._width = 768;
+  dom.footer._width = 754;
+  env.triggerResize();
   assert.equal(pill.getAttribute('data-ag-row-mode'), 'bottom');
   assert.equal(dom.footer.getAttribute('data-ag-row-mode'), 'bottom');
-  assert.equal(pill.parentElement, dom.card, 'detailed bottom-mode pill must sit in vertical card below footer');
+  assert.equal(pill.parentElement, dom.card, 'detailed mode must wrap to vertical card below footer when narrow');
   assert.equal(dom.footer.nextElementSibling, pill);
+
+  // Hysteresis band for detailed mode (freeWidth = 348: >= 336 stay-middle, < 360 enter-middle) -> holds bottom
+  dom.inputBox._width = 836;
+  dom.footer._width = 822;
+  env.triggerResize();
+  assert.equal(pill.getAttribute('data-ag-row-mode'), 'bottom', 'detailed mode must hold bottom inside hysteresis band');
+
+  // Widen past threshold (freeWidth = 376 >= 360) -> returns inline to middle
+  dom.inputBox._width = 864;
+  dom.footer._width = 850;
+  env.triggerResize();
+  assert.equal(pill.getAttribute('data-ag-row-mode'), 'middle');
+  assert.equal(pill.parentElement, dom.leftGroup);
 
   // Compact mode adapts smoothly between middle and bottom with 24px hysteresis
   const compactDom = buildComposerDom({ withExplicitFooter: true, boxWidth: 768, footerWidth: 754, modelWidth: 174, rightWidth: 256 });
@@ -590,4 +639,156 @@ test('Detailed mode always mounts in dedicated centered bottom row while compact
   compactDom.footer._width = 706;
   compactEnv.triggerResize();
   assert.equal(compactPill.getAttribute('data-ag-row-mode'), 'middle', 'hysteresis must hold middle mode without flip-flopping');
+});
+
+function createConversationPane({
+  cid,
+  boxWidth = 520,
+  footerWidth = 506,
+  modelWidth = 174,
+  rightWidth = 220,
+  modelLabel = 'Gemini 4 Argon High'
+} = {}) {
+  const convAttrs = { 'data-testid': 'conversation-view' };
+  if (cid) convAttrs['data-cascade-id'] = cid;
+  const convView = new FakeElement('DIV', { attrs: convAttrs });
+
+  const inputBox = new FakeElement('DIV', {
+    id: 'antigravity.agentSidePanelInputBox',
+    className: 'surface-composer relative flex flex-col',
+    computedStyle: { display: 'flex', flexDirection: 'column' },
+    width: boxWidth
+  });
+  convView.appendChild(inputBox);
+
+  const card = new FakeElement('DIV', {
+    className: 'surface-composer-card relative flex flex-col',
+    computedStyle: { display: 'flex', flexDirection: 'column' },
+    width: boxWidth - 4
+  });
+  inputBox.appendChild(card);
+
+  const footer = new FakeElement('DIV', {
+    className: 'agy-composer-footer flex w-full items-center justify-between gap-1 p-0.5',
+    attrs: { 'data-agent-composer-root': '' },
+    computedStyle: { display: 'flex', flexDirection: 'row' },
+    width: footerWidth
+  });
+  card.appendChild(footer);
+
+  const leftGroup = new FakeElement('DIV', {
+    className: 'flex min-w-0 flex-1 items-center gap-0',
+    computedStyle: { display: 'flex', flexDirection: 'row' },
+    width: footerWidth - rightWidth - 8
+  });
+  footer.appendChild(leftGroup);
+
+  const modelTrigger = new FakeElement('BUTTON', {
+    attrs: { 'data-testid': 'model-selector-trigger' },
+    computedStyle: { display: 'flex', flexDirection: 'row' },
+    width: modelWidth,
+    textContent: modelLabel
+  });
+  leftGroup.appendChild(modelTrigger);
+
+  const rightGroup = new FakeElement('DIV', {
+    className: 'shrink-0 flex items-center gap-0.5',
+    computedStyle: { display: 'flex', flexDirection: 'row' },
+    width: rightWidth
+  });
+  footer.appendChild(rightGroup);
+
+  return { convView, inputBox, card, footer, leftGroup, rightGroup, modelTrigger };
+}
+
+test('Split-screen conversations mount independent telemetry pills, watch both cascade IDs, and reconcile cleanly on reorder or close', () => {
+  const body = new FakeElement('BODY');
+  body._isRoot = true;
+  const cidA = '11111111-1111-4111-8111-111111111111';
+  const cidB = '22222222-2222-4222-8222-222222222222';
+
+  const paneA = createConversationPane({ cid: cidA, modelLabel: 'Gemini 4 Neon High' });
+  const paneB = createConversationPane({ cid: cidB, modelLabel: 'Gemini 4 Argon High' });
+  body.appendChild(paneA.convView);
+  body.appendChild(paneB.convView);
+
+  const env = mountTelemetryBundle({ body, cid: cidA }, { telemetryLayout: 'detailed' });
+  env.win.__ag_on_route_change();
+
+  // Both split conversations are discovered and requested from the daemon
+  assert.deepEqual(Array.from(env.win.__ag_get_watched_cascade_ids()), [cidA, cidB]);
+  assert.equal(env.requestedMetricsSigs[env.requestedMetricsSigs.length - 1], `${cidA},${cidB}`);
+
+  // Both panes mount their own telemetry pill inside their own composer box
+  const pillA = paneA.inputBox.querySelector('.ag-live-metrics-pill');
+  const pillB = paneB.inputBox.querySelector('.ag-live-metrics-pill');
+  assert.ok(pillA, 'left split pane should mount a telemetry pill');
+  assert.ok(pillB, 'right split pane should mount a telemetry pill');
+  assert.equal(pillA.id, 'ag-live-metrics-pill');
+  assert.equal(pillB.id, 'ag-live-metrics-pill-1');
+  assert.equal(pillA.getAttribute('data-ag-pane'), 'main');
+  assert.equal(pillB.getAttribute('data-ag-pane'), 'main-1');
+  assert.equal(pillA.parentElement, paneA.card);
+  assert.equal(pillB.parentElement, paneB.card);
+
+  // Pushing metrics for each conversation updates only its matching split pane
+  const htmlA = '<span class="ag-ctx-pending-dot ag-dot-idle"></span><span>133 tok/s · Ctx 305k/512k (60%)</span>';
+  const htmlB = '<span class="ag-ctx-pending-dot ag-dot-idle"></span><span>88 tok/s · Ctx 416k/512k (81%)</span>';
+  env.win.__ag_render_metrics({
+    cid: cidA,
+    hasData: true,
+    inlineHtml: htmlA,
+    tooltipHtml: '<div class="ag-tt-wrap">Pane A stats</div>'
+  });
+  env.win.__ag_render_metrics({
+    cid: cidB,
+    hasData: true,
+    inlineHtml: htmlB,
+    tooltipHtml: '<div class="ag-tt-wrap">Pane B stats</div>'
+  });
+
+  assert.equal(pillA.querySelector('.ag-live-metrics-text').getAttribute('data-ag-raw-html'), htmlA);
+  assert.equal(pillB.querySelector('.ag-live-metrics-text').getAttribute('data-ag-raw-html'), htmlB);
+  assert.equal(pillA.style.display, 'inline-flex');
+  assert.equal(pillB.style.display, 'inline-flex');
+
+  // Clicking right split pane pill opens tooltip with Pane B data and owner key main-1
+  pillB.dispatchEvent({ type: 'click', stopPropagation() {} });
+  const tt = env.doc.getElementById('ag-live-metrics-tooltip');
+  assert.ok(tt);
+  assert.equal(tt.getAttribute('data-visible'), '1');
+  assert.equal(tt.getAttribute('data-ag-owner-pane'), 'main-1');
+  assert.ok(tt.innerHTML.includes('Pane B stats'));
+
+  // Reordering split panes reconciles IDs without stealing pills or creating duplicate IDs
+  body.appendChild(paneA.convView); // DOM order is now [paneB, paneA]
+  env.win.__ag_on_route_change();
+  assert.equal(paneB.inputBox.querySelector('.ag-live-metrics-pill'), pillB);
+  assert.equal(paneA.inputBox.querySelector('.ag-live-metrics-pill'), pillA);
+  assert.equal(pillB.id, 'ag-live-metrics-pill');
+  assert.equal(pillB.getAttribute('data-ag-pane'), 'main');
+  assert.equal(pillB.querySelector('.ag-live-metrics-text').id, 'ag-live-metrics-text');
+  assert.equal(pillA.id, 'ag-live-metrics-pill-1');
+  assert.equal(pillA.getAttribute('data-ag-pane'), 'main-1');
+  assert.equal(pillA.querySelector('.ag-live-metrics-text').id, '');
+
+  // Closing one split pane removes stale pane state, disconnects its ResizeObserver, and keeps remaining pane active
+  paneA.convView.remove();
+  env.win.__ag_on_route_change();
+  assert.deepEqual(Array.from(env.win.__ag_get_watched_cascade_ids()), [cidB]);
+  assert.equal(body.querySelectorAll('.ag-live-metrics-pill').length, 1);
+  assert.equal(env.doc.getElementById('ag-live-metrics-pill'), pillB);
+  assert.equal(pillB.querySelector('.ag-live-metrics-text').getAttribute('data-ag-raw-html'), htmlB);
+  assert.equal(env.win.__ag_pane_states['main-1'], undefined);
+  assert.ok(env.roInstances.some((ro) => ro.disconnected), 'closing split pane must disconnect stale ResizeObserver');
+
+  // Opening a brand-new draft split pane (no data-cascade-id yet) does not inherit Pane B metrics
+  const draftPane = createConversationPane({ cid: '' });
+  body.appendChild(draftPane.convView);
+  env.win.__ag_on_route_change();
+  const draftPill = draftPane.inputBox.querySelector('.ag-live-metrics-pill');
+  assert.ok(draftPill, 'draft split pane should still mount its own status pill');
+  assert.equal(draftPill.id, 'ag-live-metrics-pill-1');
+  assert.ok(draftPill.querySelector('.ag-live-metrics-text').innerHTML.includes('就绪'));
+  assert.equal(pillB.querySelector('.ag-live-metrics-text').getAttribute('data-ag-raw-html'), htmlB);
 });
