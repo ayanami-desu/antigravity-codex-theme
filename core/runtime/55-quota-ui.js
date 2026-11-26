@@ -3,7 +3,8 @@
  * Pure helpers (parseQuotaResetMs, parseQuotaSummary, formatShortPoolLabel,
  * formatPoolTitle, matchActiveQuotaGroupIndex, classifyQuotaLevel,
  * computeQuotaSegments, computeQuotaDotLevels, normalizeQuotaStyle, normalizeQuotaOtherStyle,
- * formatQuotaCountdown, formatQuotaResetDetail, formatQuotaCountdownLabel, formatQuotaModelShort)
+ * formatQuotaCountdown, formatQuotaResetDetail, formatQuotaCountdownLabel, formatQuotaModelShort,
+ * hasExpiredQuotaBucket)
  * have zero DOM dependencies so unit tests can evaluate this file directly.
  */
   const AG_QUOTA_STYLES = ['segments', 'bar', 'rings', 'gauge', 'dots', 'compact'];
@@ -319,6 +320,25 @@
     return isZh ? detail + ' 重置' : 'resets ' + detail;
   }
 
+  function hasExpiredQuotaBucket(groups, nowMs = Date.now()) {
+    if (!Array.isArray(groups) || groups.length === 0) return false;
+    for (let i = 0; i < groups.length; i++) {
+      const g = groups[i];
+      if (!g || typeof g !== 'object') continue;
+      const buckets = [g.fiveHour, g.weekly];
+      for (let j = 0; j < buckets.length; j++) {
+        const b = buckets[j];
+        if (!b || typeof b !== 'object') continue;
+        const frac = Number(b.remainingFraction);
+        if (Number.isFinite(frac) && frac >= 0.9999) continue;
+        if (Number.isFinite(b.resetMs) && b.resetMs > 0 && nowMs >= b.resetMs) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   function cleanupQuotaDom() {
     try {
       const el = document.getElementById('ag-quota');
@@ -335,13 +355,13 @@
   }
 
   function mountQuotaUi() {
-    if (IS_SWARM_PLUGIN_FRAME || !ENABLED || MODULES.quota === false) {
+    if (IS_SWARM_PLUGIN_FRAME || !ENABLED) {
       cleanupQuotaDom();
       return;
     }
     if (typeof document === 'undefined' || !document.body) return;
     const SIDEBAR_ON = MODULES.quotaSidebar !== false;
-    const PANEL_ON = MODULES.metrics !== false;
+    const PANEL_ON = MODULES.quota !== false && MODULES.metrics !== false;
     if (!SIDEBAR_ON && !PANEL_ON) {
       cleanupQuotaDom();
       return;
@@ -354,10 +374,24 @@
         if (stalePop) stalePop.remove();
       } catch {}
     }
+    if (!PANEL_ON) {
+      try {
+        const tts = document.querySelectorAll ? document.querySelectorAll('.ag-quota-tt') : [];
+        for (let i = 0; i < tts.length; i++) {
+          try {
+            tts[i].remove();
+          } catch {}
+        }
+      } catch {}
+    }
 
     (function initQuotaUi() {
       const FETCH_INTERVAL_MS = 60000;
       const TICK_INTERVAL_MS = 30000;
+      const FORCE_COOLDOWN_MS = 30000;
+      const FORCE_POLL_INTERVAL_MS = 180000;
+      const WAKE_CACHE_COOLDOWN_MS = 10000;
+      const CLICK_FORCE_COOLDOWN_MS = 5000;
 
       const bootUserCfg = boot.userConfig && typeof boot.userConfig === 'object' ? boot.userConfig : {};
       let currentStyle = normalizeQuotaStyle(bootUserCfg.quotaStyle || boot.quotaStyle || 'segments');
@@ -365,8 +399,16 @@
 
       let disposed = false;
       let cachedService = null;
+      let tappedService = null;
+      let tappedOriginal = null;
+      let tappedWrapper = null;
+      let tappedHadOwnProp = false;
+      let internalFetchDepth = 0;
       let fetchInFlight = false;
+      let pendingForceRefresh = false;
+      let hasDoneInitialForceRefresh = false;
       let lastFetchAt = 0;
+      let lastForceFetchAt = 0;
       let lastGroups = null;
       let lastModelLabel = '';
       let fetchTimer = null;
@@ -386,8 +428,63 @@
         return Boolean(MODULES.i18n);
       }
 
+      function untapCloudCodeService() {
+        if (tappedService && tappedOriginal && tappedWrapper) {
+          try {
+            if (tappedService.retrieveUserQuotaSummary === tappedWrapper) {
+              if (tappedHadOwnProp) {
+                tappedService.retrieveUserQuotaSummary = tappedOriginal;
+              } else {
+                delete tappedService.retrieveUserQuotaSummary;
+              }
+            }
+          } catch {}
+        }
+        tappedService = null;
+        tappedOriginal = null;
+        tappedWrapper = null;
+        tappedHadOwnProp = false;
+      }
+
+      function tapCloudCodeService(svc) {
+        if (!svc || typeof svc.retrieveUserQuotaSummary !== 'function') return;
+        if (svc === tappedService && svc.retrieveUserQuotaSummary === tappedWrapper) return;
+        untapCloudCodeService();
+        const hadOwnProp = Object.prototype.hasOwnProperty.call(svc, 'retrieveUserQuotaSummary');
+        const desc = hadOwnProp ? Object.getOwnPropertyDescriptor(svc, 'retrieveUserQuotaSummary') : null;
+        if (desc && (!desc.writable || !desc.configurable)) return;
+        if (!hadOwnProp && !Object.isExtensible(svc)) return;
+        const orig = svc.retrieveUserQuotaSummary;
+        const wrapper = function agQuotaTappedRetrieve(forceRefresh) {
+          const p = orig.apply(this, arguments);
+          if (!disposed && internalFetchDepth === 0 && p && typeof p.then === 'function') {
+            p.then(
+              (res) => {
+                if (disposed) return;
+                const now = Date.now();
+                if (forceRefresh === true) {
+                  lastForceFetchAt = now;
+                  hasDoneInitialForceRefresh = true;
+                }
+                applyQuotaResponse(res, now);
+              },
+              () => {}
+            );
+          }
+          return p;
+        };
+        try {
+          svc.retrieveUserQuotaSummary = wrapper;
+          tappedService = svc;
+          tappedOriginal = orig;
+          tappedWrapper = wrapper;
+          tappedHadOwnProp = hadOwnProp;
+        } catch {}
+      }
+
       function findCloudCodeService() {
         if (cachedService && typeof cachedService.retrieveUserQuotaSummary === 'function') {
+          tapCloudCodeService(cachedService);
           return cachedService;
         }
         try {
@@ -407,6 +504,7 @@
               const svc = c && c.cloudCodeService;
               if (svc && typeof svc.retrieveUserQuotaSummary === 'function') {
                 cachedService = svc;
+                tapCloudCodeService(svc);
                 return svc;
               }
             }
@@ -423,6 +521,11 @@
         }
       }
 
+      function onQuotaClick() {
+        if (disposed) return;
+        void fetchQuota(true, { manual: true });
+      }
+
       function ensureQuotaMount() {
         if (!SIDEBAR_ON) return null;
         const settingsBtn = document.querySelector('[data-testid="settings-button"]');
@@ -436,6 +539,10 @@
           el.id = 'ag-quota';
           el.className = 'ag-quota';
           el.setAttribute('data-style', currentStyle);
+        }
+        if (!el.__agQuotaClickBound && typeof el.addEventListener === 'function') {
+          el.__agQuotaClickBound = true;
+          el.addEventListener('click', onQuotaClick);
         }
         if (el.parentElement !== parent || el.nextElementSibling !== settingsBtn) {
           try {
@@ -909,6 +1016,7 @@
         if (!el) return;
         el.setAttribute('data-style', currentStyle);
         el.setAttribute('data-ostyle', otherStyle);
+        el.setAttribute('title', isZh ? '点击立即刷新额度' : 'Click to refresh quota');
         el.innerHTML = buildMainQuotaHtml(lastGroups, activeIdx, currentStyle, otherStyle, modelLabel, isZh, nowMs);
       }
 
@@ -930,24 +1038,73 @@
         }
       };
 
-      async function fetchQuota() {
-        if (disposed || fetchInFlight || document.hidden) return;
+      function applyQuotaResponse(res, nowMs = Date.now()) {
+        if (disposed) return false;
+        const groups = parseQuotaSummary(res);
+        lastFetchAt = nowMs;
+        if (groups.length > 0) {
+          lastGroups = groups;
+          renderQuota();
+          return true;
+        }
+        return false;
+      }
+
+      async function fetchQuota(force = false, opts = null) {
+        if (disposed || document.hidden) return;
+        const manual = Boolean(opts && opts.manual);
+        const wantForce = Boolean(force);
+        const nowBefore = Date.now();
+        if (wantForce && !manual && lastForceFetchAt > 0 && nowBefore - lastForceFetchAt < FORCE_COOLDOWN_MS) {
+          if (lastGroups && nowBefore - lastFetchAt < WAKE_CACHE_COOLDOWN_MS) return;
+          return fetchQuota(false);
+        }
+        if (wantForce && manual && lastForceFetchAt > 0 && nowBefore - lastForceFetchAt < CLICK_FORCE_COOLDOWN_MS) {
+          return;
+        }
+        if (fetchInFlight) {
+          if (wantForce) pendingForceRefresh = true;
+          return;
+        }
         const svc = findCloudCodeService();
         if (!svc) return;
         fetchInFlight = true;
+        let shouldFollowUpForce = false;
+        let fetchOk = false;
         try {
-          const res = await svc.retrieveUserQuotaSummary(false);
+          internalFetchDepth++;
+          let req;
+          try {
+            req = svc.retrieveUserQuotaSummary(wantForce);
+          } finally {
+            internalFetchDepth--;
+          }
+          const res = await req;
           if (disposed) return;
-          const groups = parseQuotaSummary(res);
-          lastFetchAt = Date.now();
-          if (groups.length > 0) {
-            lastGroups = groups;
-            renderQuota();
+          fetchOk = true;
+          const now = Date.now();
+          if (wantForce) {
+            lastForceFetchAt = now;
+            hasDoneInitialForceRefresh = true;
+          }
+          applyQuotaResponse(res, now);
+          if (!wantForce && !hasDoneInitialForceRefresh) {
+            hasDoneInitialForceRefresh = true;
+            shouldFollowUpForce = true;
           }
         } catch {
           cachedService = null;
+          untapCloudCodeService();
         } finally {
           fetchInFlight = false;
+        }
+        if (!disposed && !document.hidden) {
+          if (pendingForceRefresh) {
+            pendingForceRefresh = false;
+            void fetchQuota(true);
+          } else if (shouldFollowUpForce && fetchOk) {
+            void fetchQuota(true);
+          }
         }
       }
 
@@ -955,7 +1112,7 @@
         if (disposed || document.hidden) return;
         if (!lastGroups || lastGroups.length === 0) {
           if (!fetchInFlight && Date.now() - lastFetchAt >= 5000) {
-            void fetchQuota();
+            void fetchQuota(false);
           }
           return;
         }
@@ -997,10 +1154,15 @@
         } catch {}
       }
 
-      const onVisibilityChange = () => {
+      const onWake = () => {
         if (disposed || document.hidden) return;
-        if (!lastGroups || Date.now() - lastFetchAt >= FETCH_INTERVAL_MS) {
-          void fetchQuota();
+        const now = Date.now();
+        if (!lastGroups || hasExpiredQuotaBucket(lastGroups, now)) {
+          void fetchQuota(true);
+        } else if (now - lastForceFetchAt >= FORCE_COOLDOWN_MS) {
+          void fetchQuota(true);
+        } else if (now - lastFetchAt >= WAKE_CACHE_COOLDOWN_MS) {
+          void fetchQuota(false);
         } else {
           renderQuota();
         }
@@ -1015,25 +1177,36 @@
         }, 120);
       };
 
-      document.addEventListener('visibilitychange', onVisibilityChange);
+      document.addEventListener('visibilitychange', onWake);
+      window.addEventListener('focus', onWake);
       document.addEventListener('click', onDocClick, true);
       window.addEventListener('popstate', onDocClick);
 
       fetchTimer = setInterval(() => {
-        if (!disposed && !document.hidden) void fetchQuota();
+        if (disposed || document.hidden) return;
+        const now = Date.now();
+        const needForce =
+          !lastGroups ||
+          hasExpiredQuotaBucket(lastGroups, now) ||
+          now - lastForceFetchAt >= FORCE_POLL_INTERVAL_MS;
+        void fetchQuota(needForce);
       }, FETCH_INTERVAL_MS);
 
       tickTimer = setInterval(() => {
-        if (!disposed && !document.hidden && lastGroups && lastGroups.length > 0) {
-          renderQuota();
+        if (disposed || document.hidden || !lastGroups || lastGroups.length === 0) return;
+        renderQuota();
+        const now = Date.now();
+        if (hasExpiredQuotaBucket(lastGroups, now) && now - lastForceFetchAt >= FORCE_COOLDOWN_MS) {
+          void fetchQuota(true);
         }
       }, TICK_INTERVAL_MS);
 
-      void fetchQuota();
+      void fetchQuota(false);
 
       if (Array.isArray(window.__ag_cleanup_fns)) {
         window.__ag_cleanup_fns.push(() => {
           disposed = true;
+          untapCloudCodeService();
           if (fetchTimer) clearInterval(fetchTimer);
           if (tickTimer) clearInterval(tickTimer);
           if (obsTimer) clearTimeout(obsTimer);
@@ -1043,7 +1216,8 @@
               observer.disconnect();
             } catch {}
           }
-          document.removeEventListener('visibilitychange', onVisibilityChange);
+          document.removeEventListener('visibilitychange', onWake);
+          window.removeEventListener('focus', onWake);
           document.removeEventListener('click', onDocClick, true);
           window.removeEventListener('popstate', onDocClick);
           for (const k of ['__ag_set_quota_style', '__ag_set_quota_other_style', '__ag_quota_decorate_tt']) {

@@ -33,6 +33,19 @@
     attributeFilter: ['title', 'aria-label', 'placeholder']
   };
 
+  const restoreNativeArrayMap = () => {
+    if (window.__ag_orig_array_map && Array.prototype.map !== window.__ag_orig_array_map) {
+      try {
+        Object.defineProperty(Array.prototype, 'map', {
+          value: window.__ag_orig_array_map,
+          writable: true,
+          configurable: true,
+          enumerable: false
+        });
+      } catch (e) {}
+    }
+  };
+
   if (MODULES.i18n) {
     function splitTopLevelSelectors(selStr) {
       const parts = [];
@@ -390,14 +403,21 @@
 
     function resolveContextualDictTranslation(trimmed, contextEl, baseVal) {
       if (!contextEl || !contextEl.closest) return baseVal;
-      if (
-        baseVal !== undefined &&
-        !/\s/.test(trimmed) &&
-        contextEl.closest(
-          '[data-testid="branch-pill-trigger"], [data-testid="project-branch-picker"], [data-testid="project-selector-trigger"], [data-testid="workspace-name"], [data-testid="sidebar-project-title"]'
-        )
-      ) {
-        return null;
+      if (baseVal !== undefined && !/\s/.test(trimmed)) {
+        if (
+          contextEl.closest(
+            '[data-testid="branch-pill-trigger"], [data-testid="project-branch-picker"], [data-testid="project-selector-trigger"], [data-testid="workspace-name"], [data-testid="sidebar-project-title"], a[data-testid="breadcrumb-segment"][href*="project="]'
+          )
+        ) {
+          return null;
+        }
+        if (
+          trimmed !== 'Standalone' &&
+          trimmed !== 'Archived' &&
+          contextEl.closest('[data-testid="project-header"]:not([data-project-icon="archived"])')
+        ) {
+          return null;
+        }
       }
       if (trimmed === 'Plan' && baseVal === '计划' && contextEl.closest('[role="dialog"]')) {
         return '方案套餐';
@@ -728,10 +748,18 @@
     }
 
     // 拦截翻译 Electron 原生右键菜单（window.electronNative.showContextMenu 传入前由 ogb/mgb .map 构造的菜单描述符）
-    const origArrayMap = window.__ag_orig_array_map || Array.prototype.map;
-    window.__ag_orig_array_map = origArrayMap;
+    const origArrayMap =
+      typeof window.__ag_orig_array_map === 'function' && !window.__ag_orig_array_map.__agPatchedArrayMap
+        ? window.__ag_orig_array_map
+        : !Array.prototype.map.__agPatchedArrayMap
+        ? Array.prototype.map
+        : null;
+    if (origArrayMap) {
+      window.__ag_orig_array_map = origArrayMap;
+    }
     const hasOwn = Object.prototype.hasOwnProperty;
-    const SKIP_NATIVE_MENU_ID_RE = /^(?:project-(?!new$|remove$)|group-(?!new$|remove$)|message-timestamp$)/;
+    const SKIP_NATIVE_MENU_ID_RE =
+      /^(?:project-(?!new$|remove$)|workspace-(?!new$|remove$)|worktree-(?!new$|remove$)|group-(?!new$|remove$)|message-timestamp$)/;
 
     function isNativeContextMenuEntry(item) {
       if (!item || typeof item !== 'object' || item.constructor !== Object) return false;
@@ -753,8 +781,9 @@
       return typeof next === 'string' ? next : rawLabel;
     }
 
-    const patchedArrayMap = function map(callback, thisArg) {
-      const res = origArrayMap.call(this, callback, thisArg);
+    const patchedArrayMap = function map(callback) {
+      const res =
+        arguments.length > 1 ? origArrayMap.call(this, callback, arguments[1]) : origArrayMap.call(this, callback);
       if (!Array.isArray(res)) return res;
       const len = res.length;
       if (len === 0 || len > 64) return res;
@@ -769,32 +798,28 @@
       if (!probe || !hasOwn.call(probe, 'accelerator') || !isNativeContextMenuEntry(probe)) {
         return res;
       }
-      for (let i = 0; i < len; i++) {
-        const entry = res[i];
-        if (entry && isNativeContextMenuEntry(entry) && typeof entry.label === 'string' && entry.label) {
-          entry.label = translateNativeMenuItemLabel(entry.label, entry.id);
+      try {
+        for (let i = 0; i < len; i++) {
+          const entry = res[i];
+          if (entry && isNativeContextMenuEntry(entry) && typeof entry.label === 'string' && entry.label) {
+            entry.label = translateNativeMenuItemLabel(entry.label, entry.id);
+          }
         }
-      }
+      } catch (e) {}
       return res;
     };
+    patchedArrayMap.__agPatchedArrayMap = true;
 
-    Object.defineProperty(Array.prototype, 'map', {
-      value: patchedArrayMap,
-      writable: true,
-      configurable: true,
-      enumerable: false
-    });
-    if (Array.isArray(window.__ag_cleanup_fns)) {
-      window.__ag_cleanup_fns.push(() => {
-        if (window.__ag_orig_array_map) {
-          Object.defineProperty(Array.prototype, 'map', {
-            value: window.__ag_orig_array_map,
-            writable: true,
-            configurable: true,
-            enumerable: false
-          });
-        }
+    if (origArrayMap) {
+      Object.defineProperty(Array.prototype, 'map', {
+        value: patchedArrayMap,
+        writable: true,
+        configurable: true,
+        enumerable: false
       });
+    }
+    if (Array.isArray(window.__ag_cleanup_fns)) {
+      window.__ag_cleanup_fns.push(restoreNativeArrayMap);
     }
 
     function translateTextNode(node) {
@@ -1103,7 +1128,10 @@
     if (document.body) {
       window.__ag_i18n_observer.observe(document.body, I18N_OBS_OPTS);
     }
-  } else if (document.body) {
-    // 若用户在配置中关闭了 i18n 模块，实时将已翻译的文本与属性还原为原始英文
-    restoreAllTranslations(document.body);
+  } else {
+    restoreNativeArrayMap();
+    if (document.body) {
+      // 若用户在配置中关闭了 i18n 模块，实时将已翻译的文本与属性还原为原始英文
+      restoreAllTranslations(document.body);
+    }
   }

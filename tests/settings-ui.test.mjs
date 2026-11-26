@@ -326,7 +326,10 @@ test('60-i18n-engine handles Antigravity 2.35.1 sentence-case labels, Thinking f
   textNodes.push(
     { nodeType: 3, nodeValue: 'Active', parentElement: mkEl({}, 'branch-pill-trigger') },
     { nodeType: 3, nodeValue: 'Commit', parentElement: mkEl({}, 'project-selector-trigger') },
-    { nodeType: 3, nodeValue: 'Select branch', parentElement: mkEl({}, 'branch-pill-trigger') }
+    { nodeType: 3, nodeValue: 'Select branch', parentElement: mkEl({}, 'branch-pill-trigger') },
+    { nodeType: 3, nodeValue: 'Ready', parentElement: mkEl({}, 'project-header') },
+    { nodeType: 3, nodeValue: 'Standalone', parentElement: mkEl({}, 'project-header') },
+    { nodeType: 3, nodeValue: 'Share', parentElement: mkEl({}, 'breadcrumb-segment') }
   );
 
   const attrEls = [
@@ -449,6 +452,7 @@ test('60-i18n-engine handles Antigravity 2.35.1 sentence-case labels, Thinking f
   // Verify Electron native right-click context menu (ogb/showContextMenu) translation & safe scoping
   const desc = vm.runInContext('Object.getOwnPropertyDescriptor(Array.prototype, "map")', sandbox);
   assert.equal(desc.enumerable, false, 'Array.prototype.map must stay non-enumerable');
+  assert.equal(vm.runInContext('Array.prototype.map.length', sandbox), 1, 'Array.prototype.map.length must stay 1 per ECMAScript spec');
 
   const nativeMenuResult = vm.runInContext(
     `(() => {
@@ -498,6 +502,7 @@ test('60-i18n-engine handles Antigravity 2.35.1 sentence-case labels, Thinking f
           label: 'Move to Project',
           items: [
             { id: 'project-user123', label: 'Code', type: 'checkbox', checked: true, onClick: () => {} },
+            { id: 'workspace-user456', label: 'Active', type: 'checkbox', checked: false, onClick: () => {} },
             { id: 'project-new', label: 'New Project...', onClick: () => {} },
             { id: 'project-remove', label: 'Remove from Project', onClick: () => {} }
           ]
@@ -523,18 +528,22 @@ test('60-i18n-engine handles Antigravity 2.35.1 sentence-case labels, Thinking f
   assert.equal(nativeMenuResult[5].submenu[1].label, '向下分屏');
   assert.equal(nativeMenuResult[6].label, '移至项目');
   assert.equal(nativeMenuResult[6].submenu[0].label, 'Code', 'User project names must never be translated');
-  assert.equal(nativeMenuResult[6].submenu[1].label, '新建项目...');
-  assert.equal(nativeMenuResult[6].submenu[2].label, '从项目移除');
+  assert.equal(nativeMenuResult[6].submenu[1].label, 'Active', 'User workspace names must never be translated');
+  assert.equal(nativeMenuResult[6].submenu[2].label, '新建项目...');
+  assert.equal(nativeMenuResult[6].submenu[3].label, '从项目移除');
   assert.equal(nativeMenuResult[8].label, '归档');
   assert.equal(nativeMenuResult[9].label, '删除');
   assert.equal(nativeMenuResult[10].label, '右侧边栏（默认）');
 
-  // Verify branch/project pills preserve single-word Git branch/project names while translating multi-word placeholders
+  // Verify branch/project pills, project headers, and project breadcrumbs preserve single-word names while translating built-ins
   assert.equal(textNodes[14].nodeValue, 'Active', 'Single-word Git branch name must not be mistranslated');
   assert.equal(textNodes[15].nodeValue, 'Commit', 'Single-word project name must not be mistranslated');
   assert.equal(textNodes[16].nodeValue, '选择分支', 'Multi-word branch placeholder should still translate');
+  assert.equal(textNodes[17].nodeValue, 'Ready', 'Single-word sidebar project-header name must not be mistranslated');
+  assert.equal(textNodes[18].nodeValue, '独立会话', 'Built-in Standalone project-header must still translate');
+  assert.equal(textNodes[19].nodeValue, 'Share', 'Single-word project breadcrumb must not be mistranslated');
 
-  // Verify patchedArrayMap fast-exits on class instances & custom Symbol.species non-Array results
+  // Verify patchedArrayMap fast-exits on class instances, frozen entries & custom Symbol.species non-Array results
   const edgeCases = vm.runInContext(
     `(() => {
       class CustomModel {
@@ -546,6 +555,7 @@ test('60-i18n-engine handles Antigravity 2.35.1 sentence-case labels, Thinking f
         }
       }
       const clsMapped = [1].map(() => new CustomModel());
+      const frozenMapped = [1].map(() => Object.freeze({ id: 'rename', label: 'Rename', accelerator: '', checked: false, disabled: false }));
       class NonArraySpecies extends Array {
         static get [Symbol.species]() {
           return function () { return { custom: true }; };
@@ -554,12 +564,21 @@ test('60-i18n-engine handles Antigravity 2.35.1 sentence-case labels, Thinking f
       const sp = new NonArraySpecies(1);
       sp[0] = { label: 'Rename', accelerator: '', checked: false, disabled: false };
       const spMapped = sp.map((x) => x);
-      return { clsLabel: clsMapped[0].label, spCustom: spMapped.custom === true };
+      return { clsLabel: clsMapped[0].label, frozenLabel: frozenMapped[0].label, spCustom: spMapped.custom === true };
     })()`,
     sandbox
   );
   assert.equal(edgeCases.clsLabel, 'Rename', 'Class instances must bypass native menu translation');
+  assert.equal(edgeCases.frozenLabel, 'Rename', 'Frozen matching entries must not throw inside patchedArrayMap');
   assert.equal(edgeCases.spCustom, true, 'Custom Symbol.species returning non-Array must not throw');
+
+  // Cleanup must restore original Array.prototype.map
+  for (const fn of sandbox.__ag_cleanup_fns) fn();
+  assert.equal(
+    vm.runInContext('Boolean(Array.prototype.map.__agPatchedArrayMap)', sandbox),
+    false,
+    'Cleanup must restore original native Array.prototype.map'
+  );
 });
 
 test('updater validates semver/paths, verifies SHA-256, backs up core/, and preserves user/', async () => {

@@ -15,7 +15,7 @@ export const CORE_DIR = path.join(ROOT_DIR, 'core');
 export const STYLES_DIR = path.join(CORE_DIR, 'styles');
 export const RUNTIME_DIR = path.join(CORE_DIR, 'runtime');
 export const USER_DIR = path.join(ROOT_DIR, 'user');
-export const BASE_VERSION = '1.4.0';
+export const BASE_VERSION = '1.4.1';
 
 export function parseDaemonCliArgs(argv = process.argv.slice(2)) {
   const hasFlag = (f) => argv.some((a) => a === f || a.startsWith(f + '='));
@@ -438,7 +438,7 @@ export function createBundleController({ safeMode = false, cliChannel = null, ha
     const activeStyleFiles = styleFiles.filter((filePath) => {
       const base = path.basename(filePath);
       if (base === '30-telemetry.css') return Boolean(modules.metrics);
-      if (base === '35-quota.css') return Boolean(modules.quota);
+      if (base === '35-quota.css') return Boolean(modules.quota || modules.quotaSidebar);
       if (base === '40-prompt-suggestions.css') return Boolean(modules.promptSuggestions);
       if (base === '45-settings-ui.css') return Boolean(enabled);
       return modules.theme !== false;

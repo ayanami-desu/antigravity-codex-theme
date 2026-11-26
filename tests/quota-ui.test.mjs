@@ -80,7 +80,8 @@ function loadQuotaHelpers() {
       formatQuotaCountdownLabel,
       formatQuotaModelShort,
       formatQuotaCountdown,
-      formatQuotaResetDetail
+      formatQuotaResetDetail,
+      hasExpiredQuotaBucket
     };`,
     sandbox
   );
@@ -356,6 +357,34 @@ test('classifyQuotaLevel, computeQuotaSegments, computeQuotaDotLevels, and norma
   assert.equal(h.formatQuotaCountdownLabel({ resetMs: baseNow + 3600000, remainingFraction: 1 }, true, baseNow), '满额');
   assert.equal(h.formatQuotaCountdownLabel({ resetMs: baseNow + 283 * 60000, remainingFraction: 0.9 }, false, baseNow), 'resets 4:43');
   assert.equal(h.formatQuotaCountdownLabel({ resetMs: baseNow + 4 * 86400000, remainingFraction: 0.5 }, false, baseNow, true), 'Mon 08:00');
+
+  // hasExpiredQuotaBucket ignores 100% full buckets with stale resetMs, flags <100% buckets past resetMs
+  assert.equal(
+    h.hasExpiredQuotaBucket(
+      [
+        {
+          fiveHour: { remainingFraction: 1, resetMs: baseNow - 60000 },
+          weekly: { remainingFraction: 0.88, resetMs: baseNow + 3600000 }
+        }
+      ],
+      baseNow
+    ),
+    false,
+    'Full (100%) bucket with past resetMs must NOT be treated as expired'
+  );
+  assert.equal(
+    h.hasExpiredQuotaBucket(
+      [
+        {
+          fiveHour: { remainingFraction: 0.71, resetMs: baseNow - 1000 },
+          weekly: { remainingFraction: 0.8, resetMs: baseNow + 3600000 }
+        }
+      ],
+      baseNow
+    ),
+    true,
+    'Non-full bucket whose resetMs has passed must be flagged as expired'
+  );
 });
 
 test('sanitizeConfigPatch toggles modules.quota, validates quotaStyle, and ignores unknown fields', () => {
@@ -386,7 +415,7 @@ test('sanitizeConfigPatch toggles modules.quota, validates quotaStyle, and ignor
   assert.equal(p4.quotaOtherStyle, 'hidden', 'invalid quotaOtherStyle must be ignored');
 });
 
-test('Assembled quota runtime mounts before settings-button, calls retrieveUserQuotaSummary(false), switches pool on model change, and cleans up timers', async () => {
+test('Assembled quota runtime mounts before settings-button, paints cache + refreshes live, switches pool on model change, and cleans up timers/tap', async () => {
   const parts = ['00-head.js', '30-antigravity-probe.js', '55-quota-ui.js', '90-tail.js'];
   const code = parts.map((p) => fs.readFileSync(path.join(RUNTIME_DIR, p), 'utf8')).join('\n');
 
@@ -410,11 +439,12 @@ test('Assembled quota runtime mounts before settings-button, calls retrieveUserQ
   body.appendChild(metricsTt);
 
   const fetchCalls = [];
+  const origRetrieve = async function (forceRefresh) {
+    fetchCalls.push(forceRefresh);
+    return SAMPLE_QUOTA_RESPONSE;
+  };
   const fakeService = {
-    async retrieveUserQuotaSummary(forceRefresh) {
-      fetchCalls.push(forceRefresh);
-      return SAMPLE_QUOTA_RESPONSE;
-    }
+    retrieveUserQuotaSummary: origRetrieve
   };
   sidebarBottom.__reactFiber$test = {
     memoizedProps: { value: { core: { cloudCodeService: fakeService } } },
@@ -441,7 +471,7 @@ test('Assembled quota runtime mounts before settings-button, calls retrieveUserQ
 
   const sandbox = {
     __AG_BOOT_PAYLOAD__: {
-      version: '1.3.5-test',
+      version: '1.4.0-test',
       platform: 'darwin',
       enabled: true,
       cssText: '',
@@ -491,7 +521,8 @@ test('Assembled quota runtime mounts before settings-button, calls retrieveUserQ
   vm.runInContext(`const __AG_BOOT_PAYLOAD__ = globalThis.__AG_BOOT_PAYLOAD__;\n${code}`, sandbox);
   await new Promise((r) => setImmediate(r));
 
-  assert.deepEqual(fetchCalls, [false], 'Must only call retrieveUserQuotaSummary(false)');
+  assert.deepEqual(fetchCalls, [false, true], 'Must paint from cache (false) then immediately pull live quota (true)');
+  assert.notEqual(fakeService.retrieveUserQuotaSummary, origRetrieve, 'Passive service tap should be installed while mounted');
   const quotaEl = fakeDoc.getElementById('ag-quota');
   assert.ok(quotaEl, '#ag-quota should mount');
   assert.equal(quotaEl.parentElement, sidebarBottom);
@@ -509,7 +540,7 @@ test('Assembled quota runtime mounts before settings-button, calls retrieveUserQ
   modelTrigger.textContent = 'Gemini 3.8 Flash (Low)';
   modelTrigger.innerText = 'Gemini 3.8 Flash (Low)';
   if (observerCb) observerCb();
-  assert.equal(fetchCalls.length, 1, 'Model change must NOT refetch quota API');
+  assert.equal(fetchCalls.length, 2, 'Model change must NOT refetch quota API');
   assert.ok(quotaEl.innerHTML.includes('Claude·GPT'), 'Secondary pool mini row should switch to Claude·GPT');
 
   // Hovering #ag-quota must NOT open any popover panel
@@ -551,17 +582,232 @@ test('Assembled quota runtime mounts before settings-button, calls retrieveUserQ
   sandbox.__ag_set_quota_other_style('rows');
   assert.ok(quotaEl.innerHTML.includes('ag-quota-orow'));
 
-  assert.equal(fetchCalls.length, 1, 'Switching display graphic styles must never trigger extra quota fetches');
+  assert.equal(fetchCalls.length, 2, 'Switching display graphic styles must never trigger extra quota fetches');
 
-  // Cleanup removes DOM nodes and clears all intervals
+  // Cleanup removes DOM nodes, restores service tap, and clears all intervals
   assert.ok(intervals.size >= 2, 'Fetch and countdown timers should be active while mounted');
   for (const fn of sandbox.__ag_cleanup_fns) fn();
   assert.equal(intervals.size, 0, 'Cleanup must clear all intervals with zero leaks');
+  assert.equal(fakeService.retrieveUserQuotaSummary, origRetrieve, 'Cleanup must restore original retrieveUserQuotaSummary');
   assert.equal(fakeDoc.getElementById('ag-quota'), null);
   assert.equal(fakeDoc.getElementById('ag-quota-popover'), null);
 });
 
-test('Quota runtime silently degrades when modules.quota is false with zero timers', async () => {
+test('Quota freshness: startup live refresh, passive native tap, window.focus wake, expired reset tick, and click-to-refresh', async () => {
+  const parts = ['00-head.js', '30-antigravity-probe.js', '55-quota-ui.js', '90-tail.js'];
+  const code = parts.map((p) => fs.readFileSync(path.join(RUNTIME_DIR, p), 'utf8')).join('\n');
+
+  let fakeNow = new Date(2026, 10, 26, 15, 0, 0).getTime();
+  class FakeDate extends Date {
+    constructor(...args) {
+      super(...(args.length === 0 ? [fakeNow] : args));
+    }
+    static now() {
+      return fakeNow;
+    }
+  }
+
+  function makeQuotaResponse(fiveHourFrac, weeklyFrac, fiveHourResetMs, weeklyResetMs) {
+    return {
+      response: {
+        groups: [
+          {
+            displayName: 'Gemini Models',
+            description: 'Models within this group: Gemini 4 Neon',
+            buckets: [
+              {
+                bucketId: 'gemini-5h',
+                window: '5h',
+                remaining: { case: 'remainingFraction', value: fiveHourFrac },
+                resetTime: { seconds: String(Math.floor(fiveHourResetMs / 1000)), nanos: 0 },
+                disabled: false
+              },
+              {
+                bucketId: 'gemini-weekly',
+                window: 'weekly',
+                remaining: { case: 'remainingFraction', value: weeklyFrac },
+                resetTime: { seconds: String(Math.floor(weeklyResetMs / 1000)), nanos: 0 },
+                disabled: false
+              }
+            ]
+          }
+        ]
+      }
+    };
+  }
+
+  const body = new FakeElement('BODY');
+  body._isRoot = true;
+  const head = new FakeElement('HEAD');
+  head._isRoot = true;
+  const sidebarBottom = new FakeElement('DIV');
+  const settingsBtn = new FakeElement('BUTTON', { 'data-testid': 'settings-button' });
+  sidebarBottom.appendChild(settingsBtn);
+  body.appendChild(sidebarBottom);
+  const modelTrigger = new FakeElement('BUTTON', {
+    'data-testid': 'model-selector-trigger',
+    'aria-label': 'Model: Gemini 4 Neon Extra High',
+    textContent: 'Gemini 4 Neon Extra High'
+  });
+  body.appendChild(modelTrigger);
+  const metricsTt = new FakeElement('DIV', { id: 'ag-live-metrics-tooltip' });
+  body.appendChild(metricsTt);
+
+  let nextCacheRes = makeQuotaResponse(0.71, 0.8, fakeNow - 60000, fakeNow + 86400000);
+  let nextLiveRes = makeQuotaResponse(0.98, 1.0, fakeNow + 4 * 3600000, fakeNow + 6 * 86400000);
+  const fetchCalls = [];
+  const origRetrieve = async function (forceRefresh) {
+    fetchCalls.push(Boolean(forceRefresh));
+    return forceRefresh ? nextLiveRes : nextCacheRes;
+  };
+  const fakeService = { retrieveUserQuotaSummary: origRetrieve };
+  sidebarBottom.__reactFiber$test = {
+    memoizedProps: { value: { core: { cloudCodeService: fakeService } } },
+    return: null
+  };
+
+  const intervals = new Map();
+  let nextTimerId = 1;
+  const docListeners = new Map();
+  const winListeners = new Map();
+  const addL = (map, t, fn) => {
+    if (!map.has(t)) map.set(t, []);
+    map.get(t).push(fn);
+  };
+  const remL = (map, t, fn) => {
+    const arr = map.get(t);
+    if (!arr) return;
+    const i = arr.indexOf(fn);
+    if (i !== -1) arr.splice(i, 1);
+  };
+  const fire = (map, t) => {
+    for (const fn of [...(map.get(t) || [])]) fn();
+  };
+
+  const fakeDoc = {
+    head,
+    body,
+    hidden: false,
+    documentElement: new FakeElement('HTML'),
+    getElementById: (id) => head.querySelector('#' + id) || body.querySelector('#' + id),
+    createElement: (tag) => new FakeElement(tag),
+    getElementsByTagName: (t) => (t === 'head' ? [head] : []),
+    querySelector: (sel) => body.querySelector(sel),
+    querySelectorAll: (sel) => body.querySelectorAll(sel),
+    addEventListener: (t, fn) => addL(docListeners, t, fn),
+    removeEventListener: (t, fn) => remL(docListeners, t, fn)
+  };
+
+  const sandbox = {
+    Date: FakeDate,
+    __AG_BOOT_PAYLOAD__: {
+      version: '1.4.0-test',
+      platform: 'darwin',
+      enabled: true,
+      cssText: '',
+      customCss: '',
+      themeVars: {},
+      i18nDict: {},
+      modules: { theme: false, i18n: true, metrics: true, quota: true, quotaSidebar: true, promptSuggestions: false, deadlockHealer: false, zoomShortcuts: false },
+      selectors: {},
+      userConfig: { modules: { i18n: true, quota: true } },
+      customJs: ''
+    },
+    location: { pathname: '/', href: 'http://127.0.0.1/', search: '' },
+    navigator: { platform: 'MacIntel', onLine: true },
+    history: { pushState() {}, replaceState() {} },
+    innerWidth: 1280,
+    innerHeight: 900,
+    document: fakeDoc,
+    addEventListener: (t, fn) => addL(winListeners, t, fn),
+    removeEventListener: (t, fn) => remL(winListeners, t, fn),
+    setInterval(fn, ms) {
+      const id = nextTimerId++;
+      intervals.set(id, { fn, ms });
+      return id;
+    },
+    clearInterval(id) {
+      intervals.delete(id);
+    },
+    setTimeout(fn) {
+      fn();
+      return nextTimerId++;
+    },
+    clearTimeout() {},
+    requestAnimationFrame: () => 1,
+    MutationObserver: class {
+      observe() {}
+      disconnect() {}
+    },
+    console
+  };
+  sandbox.window = sandbox;
+  sandbox.top = sandbox;
+
+  vm.createContext(sandbox);
+  vm.runInContext(`const __AG_BOOT_PAYLOAD__ = globalThis.__AG_BOOT_PAYLOAD__;\n${code}`, sandbox);
+  await new Promise((r) => setImmediate(r));
+
+  const quotaEl = fakeDoc.getElementById('ag-quota');
+  assert.deepEqual(fetchCalls, [false, true], 'Startup paints stale cache then pulls live quota immediately');
+  assert.ok(quotaEl.innerHTML.includes('98<small>%</small>'), 'DOM should immediately show fresh 98% instead of stale 71%');
+
+  // Passive tap: native "查看用量" calls fakeService.retrieveUserQuotaSummary(true) -> sidebar & footer sync immediately
+  nextLiveRes = makeQuotaResponse(0.84, 0.96, fakeNow + 3 * 3600000, fakeNow + 6 * 86400000);
+  await fakeService.retrieveUserQuotaSummary(true);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(fetchCalls.length, 3, 'Passive tap must not trigger any duplicate fetch');
+  assert.ok(quotaEl.innerHTML.includes('84<small>%</small>'), 'Sidebar must sync immediately from native quota call');
+  assert.ok(metricsTt.querySelector('.ag-quota-tt').innerHTML.includes('84%'), 'Telemetry footer must sync immediately too');
+
+  // Rapid window.focus inside 30s cooldown must NOT trigger extra forceRefresh
+  fakeNow += 5000;
+  fire(winListeners, 'focus');
+  await new Promise((r) => setImmediate(r));
+  assert.equal(fetchCalls.length, 3, 'Window focus inside cooldown must not spam forceRefresh');
+
+  // Window focus after 30s cooldown triggers live forceRefresh
+  fakeNow += 31000;
+  nextLiveRes = makeQuotaResponse(0.79, 0.95, fakeNow + 10000, fakeNow + 6 * 86400000);
+  fire(winListeners, 'focus');
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(fetchCalls.slice(-1), [true], 'Window focus after cooldown must trigger forceRefresh: true');
+  assert.ok(quotaEl.innerHTML.includes('79<small>%</small>'));
+
+  // Countdown passes resetMs -> 30s tickTimer detects expired bucket and forces live refresh
+  fakeNow += 35000;
+  nextLiveRes = makeQuotaResponse(1.0, 0.95, fakeNow + 5 * 3600000, fakeNow + 6 * 86400000);
+  const tickEntry = Array.from(intervals.values()).find((x) => x.ms === 30000);
+  assert.ok(tickEntry, '30s tick timer should exist');
+  tickEntry.fn();
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(fetchCalls.slice(-1), [true], 'Expired non-full bucket must trigger forceRefresh on tick');
+  assert.ok(quotaEl.innerHTML.includes('100<small>%</small>'), 'Expired bucket must refresh to newly reset 100%');
+
+  // Click-to-refresh on #ag-quota: debounced inside 5s, works immediately after 5s
+  const countBeforeClick = fetchCalls.length;
+  fakeNow += 2000;
+  quotaEl.dispatch('click');
+  await new Promise((r) => setImmediate(r));
+  assert.equal(fetchCalls.length, countBeforeClick, 'Manual click inside 5s debounce must not spam');
+
+  fakeNow += 4000;
+  nextLiveRes = makeQuotaResponse(0.92, 0.94, fakeNow + 4 * 3600000, fakeNow + 6 * 86400000);
+  quotaEl.dispatch('click');
+  await new Promise((r) => setImmediate(r));
+  assert.equal(fetchCalls.length, countBeforeClick + 1);
+  assert.deepEqual(fetchCalls.slice(-1), [true], 'Manual click on #ag-quota must trigger forceRefresh: true');
+  assert.ok(quotaEl.innerHTML.includes('92<small>%</small>'));
+
+  // Cleanup removes focus/visibility listeners and restores original service method
+  for (const fn of sandbox.__ag_cleanup_fns) fn();
+  assert.equal(fakeService.retrieveUserQuotaSummary, origRetrieve, 'Cleanup must restore tapped cloudCodeService method');
+  assert.equal((winListeners.get('focus') || []).length, 0, 'Cleanup must remove window focus listener');
+  assert.equal((docListeners.get('visibilitychange') || []).length, 0, 'Cleanup must remove visibilitychange listener');
+  assert.equal(intervals.size, 0);
+});
+
+test('Quota runtime silently degrades when both modules.quota and modules.quotaSidebar are false with zero timers', async () => {
   const parts = ['00-head.js', '30-antigravity-probe.js', '55-quota-ui.js', '90-tail.js'];
   const code = parts.map((p) => fs.readFileSync(path.join(RUNTIME_DIR, p), 'utf8')).join('\n');
 
@@ -570,7 +816,9 @@ test('Quota runtime silently degrades when modules.quota is false with zero time
   const head = new FakeElement('HEAD');
   head._isRoot = true;
   const stale = new FakeElement('DIV', { id: 'ag-quota' });
+  const staleTt = new FakeElement('DIV', { className: 'ag-quota-tt' });
   body.appendChild(stale);
+  body.appendChild(staleTt);
 
   let intervalCount = 0;
   const fakeDoc = {
@@ -589,16 +837,16 @@ test('Quota runtime silently degrades when modules.quota is false with zero time
 
   const sandbox = {
     __AG_BOOT_PAYLOAD__: {
-      version: '1.3.5-test',
+      version: '1.4.1-test',
       platform: 'darwin',
       enabled: true,
       cssText: '',
       customCss: '',
       themeVars: {},
       i18nDict: {},
-      modules: { theme: false, i18n: false, metrics: false, quota: false, promptSuggestions: false, deadlockHealer: false, zoomShortcuts: false },
+      modules: { theme: false, i18n: false, metrics: false, quota: false, quotaSidebar: false, promptSuggestions: false, deadlockHealer: false, zoomShortcuts: false },
       selectors: {},
-      userConfig: { modules: { quota: false } },
+      userConfig: { modules: { quota: false, quotaSidebar: false } },
       customJs: ''
     },
     location: { pathname: '/', href: 'http://127.0.0.1/', search: '' },
@@ -626,8 +874,62 @@ test('Quota runtime silently degrades when modules.quota is false with zero time
   vm.createContext(sandbox);
   vm.runInContext(`const __AG_BOOT_PAYLOAD__ = globalThis.__AG_BOOT_PAYLOAD__;\n${code}`, sandbox);
 
-  assert.equal(fakeDoc.getElementById('ag-quota'), null, 'Disabling quota must remove stale #ag-quota node');
-  assert.equal(intervalCount, 0, 'Disabling quota must not start any timers');
+  assert.equal(fakeDoc.getElementById('ag-quota'), null, 'Disabling both toggles must remove stale #ag-quota node');
+  assert.equal(body.querySelector('.ag-quota-tt'), null, 'Disabling both toggles must remove stale .ag-quota-tt node');
+  assert.equal(intervalCount, 0, 'Disabling both toggles must not start any timers');
+});
+
+test('quota=false with quotaSidebar=true independently mounts sidebar quota and omits panel footer', async () => {
+  const parts = ['00-head.js', '30-antigravity-probe.js', '55-quota-ui.js', '90-tail.js'];
+  const code = parts.map((p) => fs.readFileSync(path.join(RUNTIME_DIR, p), 'utf8')).join('\n');
+  const body = new FakeElement('BODY');
+  body._isRoot = true;
+  const head = new FakeElement('HEAD');
+  head._isRoot = true;
+  const sidebarBottom = new FakeElement('DIV');
+  const settingsBtn = new FakeElement('BUTTON', { 'data-testid': 'settings-button' });
+  sidebarBottom.appendChild(settingsBtn);
+  body.appendChild(sidebarBottom);
+  const tt = new FakeElement('DIV', { id: 'ag-live-metrics-tooltip' });
+  const staleFoot = new FakeElement('DIV', { className: 'ag-quota-tt' });
+  tt.appendChild(staleFoot);
+  body.appendChild(tt);
+  const fakeService = { async retrieveUserQuotaSummary() { return SAMPLE_QUOTA_RESPONSE; } };
+  sidebarBottom.__reactFiber$test = { memoizedProps: { value: { core: { cloudCodeService: fakeService } } }, return: null };
+  const fakeDoc = {
+    head, body, hidden: false, documentElement: new FakeElement('HTML'),
+    getElementById: (id) => head.querySelector('#' + id) || body.querySelector('#' + id),
+    createElement: (tag) => new FakeElement(tag),
+    getElementsByTagName: (t) => (t === 'head' ? [head] : []),
+    querySelector: (sel) => body.querySelector(sel),
+    querySelectorAll: (sel) => body.querySelectorAll(sel),
+    addEventListener() {}, removeEventListener() {}
+  };
+  const sandbox = {
+    __AG_BOOT_PAYLOAD__: {
+      version: '1.4.1-test', platform: 'darwin', enabled: true, cssText: '', customCss: '', themeVars: {}, i18nDict: {},
+      modules: { theme: false, i18n: true, metrics: true, quota: false, quotaSidebar: true, promptSuggestions: false, deadlockHealer: false, zoomShortcuts: false },
+      selectors: {}, userConfig: { modules: { quota: false, quotaSidebar: true } }, customJs: ''
+    },
+    location: { pathname: '/', href: 'http://127.0.0.1/', search: '' },
+    navigator: { platform: 'MacIntel', onLine: true },
+    history: { pushState() {}, replaceState() {} },
+    innerWidth: 1280, innerHeight: 900, document: fakeDoc,
+    addEventListener() {}, removeEventListener() {},
+    setInterval: () => 1, clearInterval() {}, setTimeout: (fn) => { fn(); return 1; }, clearTimeout() {},
+    requestAnimationFrame: () => 1,
+    MutationObserver: class { observe() {} disconnect() {} },
+    console
+  };
+  sandbox.window = sandbox;
+  sandbox.top = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(`const __AG_BOOT_PAYLOAD__ = globalThis.__AG_BOOT_PAYLOAD__;\n${code}`, sandbox);
+  await new Promise((r) => setImmediate(r));
+  const quotaEl = fakeDoc.getElementById('ag-quota');
+  assert.ok(quotaEl && quotaEl.innerHTML.includes('Gemini'), 'Sidebar block must still mount independently when quota=false and quotaSidebar=true');
+  assert.equal(tt.querySelector('.ag-quota-tt'), null, 'Panel footer must be removed and omitted when quota=false');
+  for (const fn of sandbox.__ag_cleanup_fns) fn();
 });
 
 test('quotaSidebar=false keeps the telemetry panel footer but never mounts the sidebar block', async () => {
@@ -656,7 +958,7 @@ test('quotaSidebar=false keeps the telemetry panel footer but never mounts the s
   };
   const sandbox = {
     __AG_BOOT_PAYLOAD__: {
-      version: '1.3.5-test', platform: 'darwin', enabled: true, cssText: '', customCss: '', themeVars: {}, i18nDict: {},
+      version: '1.4.0-test', platform: 'darwin', enabled: true, cssText: '', customCss: '', themeVars: {}, i18nDict: {},
       modules: { theme: false, i18n: false, metrics: true, quota: true, quotaSidebar: false, promptSuggestions: false, deadlockHealer: false, zoomShortcuts: false },
       selectors: {}, userConfig: { modules: { quota: true, quotaSidebar: false } }, customJs: ''
     },

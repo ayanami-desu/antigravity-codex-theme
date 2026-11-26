@@ -229,12 +229,12 @@
             modTheme: 'Codex 昼夜主题',
             modThemeDesc: '浅色纯白与中性炭灰深色配色，随 IDE 外观自动切换',
             modI18n: '中文界面汉化',
-            modI18nDesc: '内置 1,900+ 界面词条，原地更新不影响交互，关闭即恢复英文',
+            modI18nDesc: '内置 2,000+ 界面与原生右键菜单词条，原地更新不影响交互，关闭即恢复英文',
             modMetrics: '实时会话状态与用量统计',
             modMetricsDesc: '底部四态状态指示、一/二级明细面板与每轮对话尾部统计',
             modQuota: '模型额度',
             modQuotaDesc: '在会话统计面板底部显示当前模型池的 5h / 7d 剩余额度',
-            quotaSidebarLbl: '侧栏显示',
+            quotaSidebarLbl: '侧栏模型额度',
             quotaSidebarDesc: '在「系统设置」上方常驻显示当前与其他模型池额度；侧栏折叠时自动隐藏',
             quotaStyleLbl: '当前模型池',
             quotaStyleHint: '正在使用的池子，显示具体数值与重置时间',
@@ -338,12 +338,12 @@
           modTheme: 'Codex Light & Dark Theme',
           modThemeDesc: 'Pure white light and charcoal dark palettes that follow IDE appearance automatically',
           modI18n: 'Chinese UI Localization',
-          modI18nDesc: '1,900+ built-in UI entries applied in place; disable to restore English immediately',
+          modI18nDesc: '2,000+ built-in UI & native context menu entries applied in place; disable to restore English immediately',
           modMetrics: 'Live Session Status & Telemetry',
           modMetricsDesc: 'Bottom 4-state status indicator, expandable L1/L2 panels, and per-turn footer stats',
-          modQuota: 'Model Quota',
+          modQuota: 'Model Quota (Panel)',
           modQuotaDesc: 'Shows 5h / 7d remaining quota of the active pool at the bottom of the session stats panel',
-          quotaSidebarLbl: 'Show in Sidebar',
+          quotaSidebarLbl: 'Model Quota (Sidebar)',
           quotaSidebarDesc: 'Pins a quota block above Settings showing active and other pools; hidden when the sidebar collapses',
           quotaStyleLbl: 'Active Pool',
           quotaStyleHint: 'The pool in use, with exact values and reset time',
@@ -1566,7 +1566,7 @@
               '</button>'
           )
           .join('');
-        const quotaSidebarOn = quotaOn && mods.quotaSidebar !== false;
+        const quotaSidebarOn = mods.quotaSidebar !== false;
         const curQuotaOther = ['lines', 'text', 'segments', 'rings', 'rows', 'hidden'].includes(cfg.quotaOtherStyle)
           ? cfg.quotaOtherStyle
           : 'lines';
@@ -1792,18 +1792,13 @@
           '" ' +
           (quotaOn ? 'checked' : '') +
           ' />' +
-          '</div>' +
-          '<div class="ag-s-subrow"' +
-          (quotaOn ? '' : ' hidden') +
-          '>' +
-          '<div>' +
-          '<label class="ag-s-sub-label" for="ag-s-sw-quota-sidebar">' +
+          '</div></div>' +
+          '<div class="ag-s-row"><div class="ag-s-row-main">' +
+          '<div class="ag-s-row-info"><label class="ag-s-row-label" for="ag-s-sw-quota-sidebar">' +
           escHtml(s.quotaSidebarLbl) +
-          '</label>' +
-          '<div class="ag-s-sub-desc">' +
+          '</label><div class="ag-s-row-desc">' +
           escHtml(s.quotaSidebarDesc) +
-          '</div>' +
-          '</div>' +
+          '</div></div>' +
           '<input id="ag-s-sw-quota-sidebar" type="checkbox" switch role="switch" class="ag-s-switch" data-bind-mod="quotaSidebar" aria-label="' +
           escHtml(s.quotaSidebarLbl) +
           '" ' +
