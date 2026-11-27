@@ -28,14 +28,14 @@
   function formatShortPoolLabel(displayName) {
     const raw = String(displayName || '').trim();
     if (!raw) return 'Quota';
-    if (/gemini/i.test(raw)) return 'Gemini';
+    if (/^gemini(?:\s+models?)?$/i.test(raw)) return 'Gemini';
     if (/claude/i.test(raw) && /gpt/i.test(raw)) return 'Claude·GPT';
     const cleaned = raw
       .replace(/\s+models?$/i, '')
       .replace(/\s*(?:and|&|\/)\s*/gi, '·')
       .replace(/\s+/g, ' ')
       .trim();
-    return cleaned.length > 14 ? cleaned.slice(0, 13) + '…' : cleaned || raw;
+    return cleaned.length > 18 ? cleaned.slice(0, 17) + '…' : cleaned || raw;
   }
 
   function formatPoolTitle(displayName, isZh) {
@@ -164,6 +164,46 @@
     return 0;
   }
 
+  const GENERIC_QUOTA_POOL_WORDS = new Set([
+    'gemini',
+    'claude',
+    'gpt',
+    'openai',
+    'anthropic',
+    'google',
+    'model',
+    'models',
+    'pool',
+    'quota',
+    'group',
+    'and',
+    'or',
+    'other',
+    'others',
+    'all',
+    'default',
+    'general',
+    'experimental',
+    'third',
+    'party',
+    '3p'
+  ]);
+
+  function extractQuotaDisplayNameCandidate(displayName) {
+    const cleaned = String(displayName || '')
+      .trim()
+      .replace(/\s+models?$/i, '')
+      .trim();
+    if (!cleaned) return '';
+    const tokens = cleaned
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter(Boolean);
+    if (tokens.length === 0) return '';
+    if (!tokens.some((t) => !GENERIC_QUOTA_POOL_WORDS.has(t))) return '';
+    return cleaned;
+  }
+
   function matchActiveQuotaGroupIndex(groups, modelLabel) {
     if (!Array.isArray(groups) || groups.length === 0) return -1;
     const rawLabel = String(modelLabel || '').trim();
@@ -178,23 +218,45 @@
 
     let bestIdx = -1;
     let bestScore = 0;
+    let bestFromModels = false;
     for (let i = 0; i < groups.length; i++) {
       const g = groups[i];
       const models = Array.isArray(g.models) ? g.models : extractGroupModelNames(g.description);
-      let groupBest = 0;
+      let modelBest = 0;
       for (let j = 0; j < models.length; j++) {
         const sc = scoreQuotaModelMatch(modelKey, modelBaseKey, rawModelTokens, models[j]);
-        if (sc > groupBest) groupBest = sc;
+        if (sc > modelBest) modelBest = sc;
       }
-      if (groupBest > bestScore) {
+      const nameCandidate = extractQuotaDisplayNameCandidate(g.displayName);
+      const nameScore = nameCandidate
+        ? scoreQuotaModelMatch(modelKey, modelBaseKey, rawModelTokens, nameCandidate)
+        : 0;
+      const groupBest = modelBest >= nameScore ? modelBest : nameScore;
+      const groupFromModels = modelBest >= nameScore && modelBest > 0;
+      if (
+        groupBest > bestScore ||
+        (groupBest > 0 && groupBest === bestScore && groupFromModels && !bestFromModels)
+      ) {
         bestScore = groupBest;
+        bestFromModels = groupFromModels;
         bestIdx = i;
       }
     }
     if (bestIdx >= 0) return bestIdx;
 
-    const geminiIdx = groups.findIndex((g) => /gemini/i.test(g.displayName || ''));
-    const nonGeminiIdx = groups.findIndex((g) => !/gemini/i.test(g.displayName || ''));
+    const genericGeminiIdx = groups.findIndex((g) =>
+      /^gemini(?:\s+models?)?$/i.test(String(g.displayName || '').trim())
+    );
+    const geminiIdx =
+      genericGeminiIdx >= 0 ? genericGeminiIdx : groups.findIndex((g) => /gemini/i.test(g.displayName || ''));
+    const genericNonGeminiIdx = groups.findIndex((g) => {
+      const dn = String(g.displayName || '').trim();
+      return dn && !/gemini/i.test(dn) && !extractQuotaDisplayNameCandidate(dn);
+    });
+    const nonGeminiIdx =
+      genericNonGeminiIdx >= 0
+        ? genericNonGeminiIdx
+        : groups.findIndex((g) => !/gemini/i.test(g.displayName || ''));
     if (/gemini|orchestrator/i.test(rawLabel)) {
       return geminiIdx >= 0 ? geminiIdx : 0;
     }
@@ -312,6 +374,7 @@
       const h = Math.floor(mins / 60);
       const m = mins % 60;
       const hhmm = h + ':' + String(m).padStart(2, '0');
+      if (compact) return isZh ? hhmm + ' 后' : hhmm;
       return isZh ? hhmm + ' 后重置' : 'resets ' + hhmm;
     }
     const detail = formatQuotaResetDetail(bucket.resetMs, bucket.remainingFraction, isZh, nowMs);
@@ -798,8 +861,7 @@
           const items = entries
             .map((e) => {
               const lvl = classifyQuotaLevel(e.b.pct);
-              const tFull = formatQuotaCountdownLabel(e.b, isZh, nowMs, true);
-              const tInline = isZh ? tFull.replace(/\s*后重置$/, ' 后') : tFull.replace(/^resets\s+/, '');
+              const tInline = formatQuotaCountdownLabel(e.b, isZh, nowMs, true);
               return (
                 '<div class="ag-quota-o-tcol" data-level="' +
                 lvl +

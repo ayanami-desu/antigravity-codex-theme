@@ -140,6 +140,7 @@
       let reqSeq = 0;
       const pendingReqs = new Map();
       let scanTimer = null;
+      let delayedScanTimer = null;
       let statusPollTimer = null;
       let saveBadgeTimer = null;
       let applyTimeoutTimer = null;
@@ -170,14 +171,25 @@
         return m ? 'v' + m[1] : 'v1.2';
       }
 
+      const APPLY_RELOAD_TIMEOUT_MS = 20000;
+      const currentCoreHash = typeof CORE_HASH === 'string' ? CORE_HASH : '';
+      const currentDaemonBootId = typeof DAEMON_BOOT_ID === 'string' ? DAEMON_BOOT_ID : '';
       const currentBootSeq =
         typeof BUNDLE_BOOT_SEQ === 'number' ? BUNDLE_BOOT_SEQ : Number(window.__ag_bundle_boot_seq) || 0;
 
-      const initialUpdateState = (() => {
-        const fallback = {
+      const VALID_COMPLETED_UPDATE_STATUSES = new Set([
+        'up_to_date',
+        'ahead',
+        'update_available',
+        'main_diff',
+        'error'
+      ]);
+
+      function makeIdleUpdateState(currentVersion = '') {
+        return {
           phase: 'idle',
           status: 'idle',
-          currentVersion: '',
+          currentVersion,
           latestVersion: '',
           updateAvailable: false,
           canSyncMain: false,
@@ -185,32 +197,170 @@
           targetRef: 'main',
           error: ''
         };
+      }
+
+      function sanitizeTransientUpdateState(state, { markInterruptedUpdating = false } = {}) {
+        const liveShort = getShortVersionTag().replace(/^v/i, '');
+        const fallback = makeIdleUpdateState(liveShort);
+        const hasValidCompletedStatus =
+          Boolean(state && VALID_COMPLETED_UPDATE_STATUSES.has(state.status)) &&
+          !(state.status === 'error' && !String(state.error || '').trim());
+        let next;
+        if (hasValidCompletedStatus) {
+          next = Object.assign({}, fallback, state, {
+            phase: 'done',
+            currentVersion: liveShort,
+            cachedCoreHash: currentCoreHash,
+            cachedDaemonBootId: currentDaemonBootId,
+            cachedPatchVersion: PATCH_VERSION
+          });
+        } else {
+          next = Object.assign({}, fallback, {
+            currentVersion: liveShort,
+            cachedCoreHash: currentCoreHash,
+            cachedDaemonBootId: currentDaemonBootId,
+            cachedPatchVersion: PATCH_VERSION
+          });
+        }
+        if (markInterruptedUpdating) {
+          next.interruptedPhase = 'updating';
+          if (state && state.latestVersion && !next.latestVersion) {
+            next.latestVersion = state.latestVersion;
+          }
+        } else {
+          delete next.interruptedPhase;
+        }
+        return next;
+      }
+
+      const initialUpdateState = (() => {
+        const fallback = makeIdleUpdateState('');
         const cached =
           window.__ag_settings_update_cache && typeof window.__ag_settings_update_cache === 'object'
             ? Object.assign({}, window.__ag_settings_update_cache)
             : null;
         if (!cached) return fallback;
+        const liveShort = getShortVersionTag().replace(/^v/i, '');
         if (cached.status === 'applied') {
-          const liveShort = getShortVersionTag().replace(/^v/i, '');
           const targetShort = String(cached.currentVersion || cached.latestVersion || '').replace(/^v/i, '');
           let reloadedToNewBundle = false;
-          if (typeof cached.appliedAtBootSeq === 'number' && cached.appliedAtBootSeq > 0) {
-            reloadedToNewBundle = currentBootSeq > cached.appliedAtBootSeq;
-          } else if (cached.appliedFromPatchVersion) {
-            reloadedToNewBundle = cached.appliedFromPatchVersion !== PATCH_VERSION;
+          if (targetShort && liveShort && targetShort !== liveShort) {
+            reloadedToNewBundle = false;
           } else {
-            reloadedToNewBundle = Boolean(targetShort && liveShort === targetShort);
+            const hasAppliedCoreIdentity = Boolean(
+              (cached.appliedFromCoreHash && currentCoreHash) ||
+              (cached.appliedFromDaemonBootId && currentDaemonBootId)
+            );
+            if (hasAppliedCoreIdentity) {
+              const coreChanged = Boolean(
+                cached.appliedFromCoreHash &&
+                  currentCoreHash &&
+                  cached.appliedFromCoreHash !== currentCoreHash
+              );
+              const daemonRestarted = Boolean(
+                cached.appliedFromDaemonBootId &&
+                  currentDaemonBootId &&
+                  cached.appliedFromDaemonBootId !== currentDaemonBootId
+              );
+              const appliedFromShort = String(cached.appliedFromVersion || '').replace(/^v/i, '');
+              const semverUpgraded = Boolean(appliedFromShort && liveShort && appliedFromShort !== liveShort);
+              reloadedToNewBundle = coreChanged || daemonRestarted || semverUpgraded;
+            } else if (typeof cached.appliedAtBootSeq === 'number' && cached.appliedAtBootSeq > 0) {
+              reloadedToNewBundle = currentBootSeq > cached.appliedAtBootSeq;
+            } else if (cached.appliedFromPatchVersion) {
+              reloadedToNewBundle = cached.appliedFromPatchVersion !== PATCH_VERSION;
+            } else {
+              reloadedToNewBundle = Boolean(targetShort && liveShort === targetShort);
+            }
           }
           if (reloadedToNewBundle) {
             const resolved = Object.assign({}, fallback, {
               phase: 'done',
               status: 'up_to_date',
               currentVersion: liveShort || targetShort,
-              latestVersion: liveShort || targetShort
+              latestVersion: liveShort || targetShort,
+              cachedCoreHash: currentCoreHash,
+              cachedDaemonBootId: currentDaemonBootId,
+              cachedPatchVersion: PATCH_VERSION
             });
             window.__ag_settings_update_cache = Object.assign({}, resolved);
             return resolved;
           }
+          return cached;
+        }
+
+        const cachedCurrentShort = String(cached.currentVersion || '').replace(/^v/i, '');
+        const latestShort = String(cached.latestVersion || '').replace(/^v/i, '');
+        const hasCoreIdentity = Boolean(
+          (cached.cachedCoreHash && currentCoreHash) ||
+          (cached.cachedDaemonBootId && currentDaemonBootId)
+        );
+        const coreHashMismatch = Boolean(
+          cached.cachedCoreHash && currentCoreHash && cached.cachedCoreHash !== currentCoreHash
+        );
+        const daemonRestarted = Boolean(
+          cached.cachedDaemonBootId &&
+            currentDaemonBootId &&
+            cached.cachedDaemonBootId !== currentDaemonBootId
+        );
+        const legacyPatchVersionMismatch = Boolean(
+          !hasCoreIdentity && cached.cachedPatchVersion && cached.cachedPatchVersion !== PATCH_VERSION
+        );
+        const semverMismatch = Boolean(cachedCurrentShort && liveShort && cachedCurrentShort !== liveShort);
+        const wasUpdating = cached.phase === 'updating' || cached.interruptedPhase === 'updating';
+
+        if (coreHashMismatch || daemonRestarted || semverMismatch || legacyPatchVersionMismatch) {
+          if (wasUpdating && (!latestShort || liveShort === latestShort)) {
+            const resolved = Object.assign({}, fallback, {
+              phase: 'done',
+              status: 'up_to_date',
+              currentVersion: liveShort,
+              latestVersion: liveShort,
+              cachedCoreHash: currentCoreHash,
+              cachedDaemonBootId: currentDaemonBootId,
+              cachedPatchVersion: PATCH_VERSION
+            });
+            window.__ag_settings_update_cache = Object.assign({}, resolved);
+            return resolved;
+          }
+          const reset = Object.assign({}, fallback, {
+            currentVersion: liveShort,
+            cachedCoreHash: currentCoreHash,
+            cachedDaemonBootId: currentDaemonBootId,
+            cachedPatchVersion: PATCH_VERSION
+          });
+          window.__ag_settings_update_cache = Object.assign({}, reset);
+          return reset;
+        }
+
+        if (cached.phase === 'checking' || cached.phase === 'updating') {
+          const sanitized = sanitizeTransientUpdateState(cached);
+          window.__ag_settings_update_cache = Object.assign({}, sanitized);
+          return sanitized;
+        }
+
+        if (cached.status === 'error' && !String(cached.error || '').trim()) {
+          const reset = Object.assign({}, fallback, {
+            currentVersion: liveShort,
+            cachedCoreHash: currentCoreHash,
+            cachedDaemonBootId: currentDaemonBootId,
+            cachedPatchVersion: PATCH_VERSION
+          });
+          window.__ag_settings_update_cache = Object.assign({}, reset);
+          return reset;
+        }
+
+        if (
+          cached.interruptedPhase ||
+          cached.cachedPatchVersion !== PATCH_VERSION ||
+          (currentCoreHash && cached.cachedCoreHash !== currentCoreHash) ||
+          (currentDaemonBootId && cached.cachedDaemonBootId !== currentDaemonBootId)
+        ) {
+          delete cached.interruptedPhase;
+          cached.cachedPatchVersion = PATCH_VERSION;
+          if (currentCoreHash) cached.cachedCoreHash = currentCoreHash;
+          if (currentDaemonBootId) cached.cachedDaemonBootId = currentDaemonBootId;
+          window.__ag_settings_update_cache = Object.assign({}, cached);
         }
         return cached;
       })();
@@ -268,9 +418,9 @@
             modI18nDesc: '内置 2,000+ 界面与原生右键菜单词条，原地更新不影响交互，关闭即恢复英文',
             modMetrics: '实时会话状态与用量统计',
             modMetricsDesc: '底部四态状态指示、一/二级明细面板与每轮对话尾部统计',
-            modQuota: '模型额度',
+            modQuota: '模型额度（状态栏面板）',
             modQuotaDesc: '在会话统计面板底部显示当前模型池的 5h / 7d 剩余额度',
-            quotaSidebarLbl: '侧栏模型额度',
+            quotaSidebarLbl: '模型额度（侧边栏）',
             quotaSidebarDesc: '在「系统设置」上方常驻显示当前与其他模型池额度；侧栏折叠时自动隐藏',
             quotaStyleLbl: '当前模型池',
             quotaStyleHint: '正在使用的池子，显示具体数值与重置时间',
@@ -501,6 +651,7 @@
 
       function callDaemonBinding(bindingName, payloadObj, timeoutMs = 15000) {
         return new Promise((resolve) => {
+          if (disposed) return resolve(null);
           const fn = window[bindingName];
           if (typeof fn !== 'function') return resolve(null);
           reqSeq += 1;
@@ -509,9 +660,12 @@
             pendingReqs.delete(reqId);
             resolve(null);
           }, timeoutMs);
-          pendingReqs.set(reqId, (res) => {
-            clearTimeout(timer);
-            resolve(res);
+          pendingReqs.set(reqId, {
+            timer,
+            resolve: (res) => {
+              clearTimeout(timer);
+              resolve(res);
+            }
           });
           try {
             fn(JSON.stringify(Object.assign({ reqId }, payloadObj || {})));
@@ -525,10 +679,10 @@
 
       window.__ag_on_settings_state = (reqId, payload) => {
         if (disposed) return;
-        const cb = pendingReqs.get(reqId);
-        if (cb) {
+        const entry = pendingReqs.get(reqId);
+        if (entry) {
           pendingReqs.delete(reqId);
-          cb(payload);
+          entry.resolve(payload);
         }
       };
 
@@ -583,6 +737,7 @@
           updateRefreshSpin();
         }
         const res = await callDaemonBinding('__agGetSettingsState', { includeModels, refreshModels, forceReload });
+        if (disposed) return;
         if (forceReload) {
           refreshingAll = false;
           updateRefreshSpin();
@@ -591,14 +746,42 @@
           refreshingModels = false;
           updateRefreshSpin();
         }
-        if (!disposed && res) {
+        if (res) {
           applyRemoteState(res, forceReload ? 'refreshed' : false);
         }
       }
 
+      function armApplyTimeout(delayMs = APPLY_RELOAD_TIMEOUT_MS) {
+        if (applyTimeoutTimer) clearTimeout(applyTimeoutTimer);
+        applyTimeoutTimer = setTimeout(() => {
+          applyTimeoutTimer = null;
+          if (disposed || uiState.update.status !== 'applied') return;
+          uiState.update = Object.assign({}, uiState.update, {
+            phase: 'done',
+            status: 'error',
+            error: isZhUi()
+              ? '文件已更新，但后台服务热重载超时；请在终端运行 node ~/.gemini/antigravity/codex-theme/install.mjs install 完成重启'
+              : 'Files updated, but daemon hot-reload timed out; run node ~/.gemini/antigravity/codex-theme/install.mjs install',
+            cachedCoreHash: currentCoreHash,
+            cachedDaemonBootId: currentDaemonBootId,
+            cachedPatchVersion: PATCH_VERSION
+          });
+          window.__ag_settings_update_cache = Object.assign({}, uiState.update);
+          renderPane();
+        }, Math.max(0, Number(delayMs) || 0));
+      }
+
       async function checkPluginUpdate() {
         if (uiState.update.phase === 'checking' || uiState.update.phase === 'updating') return;
-        uiState.update = Object.assign({}, uiState.update, { phase: 'checking', error: '' });
+        uiState.update = Object.assign({}, uiState.update, {
+          phase: 'checking',
+          status: uiState.update.status === 'error' ? 'idle' : uiState.update.status,
+          error: '',
+          cachedCoreHash: currentCoreHash,
+          cachedDaemonBootId: currentDaemonBootId,
+          cachedPatchVersion: PATCH_VERSION
+        });
+        delete uiState.update.interruptedPhase;
         window.__ag_settings_update_cache = Object.assign({}, uiState.update);
         renderPane();
 
@@ -610,7 +793,10 @@
             status: 'error',
             updateAvailable: false,
             canSyncMain: false,
-            error: (res && res.error) || 'Network error'
+            error: (res && res.error) || 'Network error',
+            cachedCoreHash: currentCoreHash,
+            cachedDaemonBootId: currentDaemonBootId,
+            cachedPatchVersion: PATCH_VERSION
           });
         } else {
           uiState.update = {
@@ -622,7 +808,10 @@
             canSyncMain: Boolean(res.canSyncMain),
             changedCount: Number(res.changedCount || 0),
             targetRef: res.targetRef || 'main',
-            error: ''
+            error: '',
+            cachedCoreHash: currentCoreHash,
+            cachedDaemonBootId: currentDaemonBootId,
+            cachedPatchVersion: PATCH_VERSION
           };
         }
         window.__ag_settings_update_cache = Object.assign({}, uiState.update);
@@ -632,7 +821,14 @@
       async function applyPluginUpdateAction() {
         if (uiState.update.phase === 'updating' || uiState.update.phase === 'checking') return;
         const ref = uiState.update.targetRef || 'main';
-        uiState.update = Object.assign({}, uiState.update, { phase: 'updating', error: '' });
+        uiState.update = Object.assign({}, uiState.update, {
+          phase: 'updating',
+          error: '',
+          cachedCoreHash: currentCoreHash,
+          cachedDaemonBootId: currentDaemonBootId,
+          cachedPatchVersion: PATCH_VERSION
+        });
+        delete uiState.update.interruptedPhase;
         window.__ag_settings_update_cache = Object.assign({}, uiState.update);
         const paneEl = document.getElementById('ag-settings-pane');
         if (paneEl) window.__ag_settings_scroll_top = paneEl.scrollTop;
@@ -644,17 +840,27 @@
           uiState.update = Object.assign({}, uiState.update, {
             phase: 'done',
             status: 'error',
-            error: (res && res.error) || 'Update failed'
+            error: (res && res.error) || 'Update failed',
+            cachedCoreHash: currentCoreHash,
+            cachedDaemonBootId: currentDaemonBootId,
+            cachedPatchVersion: PATCH_VERSION
           });
         } else {
+          const appliedFromVersion = getShortVersionTag().replace(/^v/i, '');
           uiState.update = {
             phase: 'applied',
             status: 'applied',
             currentVersion: res.version || uiState.update.latestVersion,
             latestVersion: res.version || uiState.update.latestVersion,
+            appliedFromVersion,
+            appliedFromCoreHash: currentCoreHash,
+            appliedFromDaemonBootId: currentDaemonBootId,
             appliedFromPatchVersion: PATCH_VERSION,
             appliedAtBootSeq: currentBootSeq,
             appliedAt: Date.now(),
+            cachedCoreHash: currentCoreHash,
+            cachedDaemonBootId: currentDaemonBootId,
+            cachedPatchVersion: PATCH_VERSION,
             updateAvailable: false,
             canSyncMain: false,
             changedCount: 0,
@@ -663,20 +869,7 @@
           };
           window.__ag_settings_saved_label = 'refreshed';
           window.__ag_settings_saved_until = Date.now() + 3000;
-          if (applyTimeoutTimer) clearTimeout(applyTimeoutTimer);
-          applyTimeoutTimer = setTimeout(() => {
-            applyTimeoutTimer = null;
-            if (disposed || uiState.update.status !== 'applied') return;
-            uiState.update = Object.assign({}, uiState.update, {
-              phase: 'done',
-              status: 'error',
-              error: isZhUi()
-                ? '文件已更新，但后台服务热重载超时；请在终端运行 node ~/.gemini/antigravity/codex-theme/install.mjs install 完成重启'
-                : 'Files updated, but daemon hot-reload timed out; run node ~/.gemini/antigravity/codex-theme/install.mjs install'
-            });
-            window.__ag_settings_update_cache = Object.assign({}, uiState.update);
-            renderPane();
-          }, 15000);
+          armApplyTimeout(APPLY_RELOAD_TIMEOUT_MS);
         }
         window.__ag_settings_update_cache = Object.assign({}, uiState.update);
         renderPane();
@@ -1777,7 +1970,7 @@
           escHtml(s.githubLabel) +
           '</span>' +
           '</a>' +
-          '<a id="ag-s-link-feedback" class="ag-s-hdr-link" href="https://x.com/shehxuhxjx66088/status/2124698149742883293?a=EQtEZD2AMCGaj9bBRIo&s=20" target="_blank" rel="noopener noreferrer" data-ext-link="feedback">' +
+          '<a id="ag-s-link-feedback" class="ag-s-hdr-link" href="https://x.com/shehxuhxjx66088/status/2126138218185965569?a=GTzmV7FcYi2Wj97aJ1U&s=20" target="_blank" rel="noopener noreferrer" data-ext-link="feedback">' +
           '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M9.52 6.77 15.48 0h-1.41L8.9 5.88 4.77 0H0l6.25 8.9L0 16h1.41l5.46-6.21L11.23 16H16L9.52 6.77Zm-1.93 2.2-.63-.89L1.92 1.04h2.17l4.07 5.7.63.89 5.29 7.4h-2.17L7.59 8.97Z"/></svg>' +
           '<span>' +
           escHtml(s.feedbackLabel) +
@@ -2118,7 +2311,10 @@
           // Group 5: Plugin Version & Updates
           (() => {
             const u = uiState.update || {};
-            const verStr = u.currentVersion ? 'v' + String(u.currentVersion).replace(/^v/i, '') : getShortVersionTag();
+            const verStr =
+              u.status === 'applied' && u.currentVersion
+                ? 'v' + String(u.currentVersion).replace(/^v/i, '')
+                : getShortVersionTag();
             const isBusy = u.phase === 'checking' || u.phase === 'updating';
             let pillHtml = '';
             let descText = s.updDescIdle;
@@ -2621,7 +2817,11 @@
         }
         if (ev.target && ev.target.closest && ev.target.closest('[data-testid="settings-button"]')) {
           scheduleScan(40);
-          setTimeout(() => { if (!disposed) tryMountInSettingsModal(); }, 160);
+          if (delayedScanTimer) clearTimeout(delayedScanTimer);
+          delayedScanTimer = setTimeout(() => {
+            delayedScanTimer = null;
+            if (!disposed) tryMountInSettingsModal();
+          }, 160);
         }
       };
 
@@ -2650,11 +2850,35 @@
       document.addEventListener('click', onDocClick, true);
 
       tryMountInSettingsModal();
+      if (
+        uiState.update &&
+        uiState.update.status === 'applied' &&
+        typeof uiState.update.appliedAt === 'number' &&
+        uiState.update.appliedAt > 0
+      ) {
+        const elapsed = Date.now() - uiState.update.appliedAt;
+        armApplyTimeout(Math.max(500, APPLY_RELOAD_TIMEOUT_MS - elapsed));
+      }
 
       if (Array.isArray(window.__ag_cleanup_fns)) {
         window.__ag_cleanup_fns.push(() => {
           disposed = true;
+          for (const entry of pendingReqs.values()) {
+            if (entry && entry.timer) clearTimeout(entry.timer);
+            if (entry && typeof entry.resolve === 'function') {
+              try { entry.resolve(null); } catch {}
+            }
+          }
+          pendingReqs.clear();
+          if (uiState.update.phase === 'checking' || uiState.update.phase === 'updating') {
+            const sanitized = sanitizeTransientUpdateState(uiState.update, {
+              markInterruptedUpdating: uiState.update.phase === 'updating'
+            });
+            uiState.update = sanitized;
+            window.__ag_settings_update_cache = Object.assign({}, sanitized);
+          }
           if (scanTimer) clearTimeout(scanTimer);
+          if (delayedScanTimer) clearTimeout(delayedScanTimer);
           if (statusPollTimer) clearInterval(statusPollTimer);
           if (saveBadgeTimer) clearTimeout(saveBadgeTimer);
           if (applyTimeoutTimer) clearTimeout(applyTimeoutTimer);

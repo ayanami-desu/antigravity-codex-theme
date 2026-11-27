@@ -4,6 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -13,9 +14,14 @@ import {
   deriveEffortFromModelId,
   parseAgyModelsOutput
 } from '../core/daemon/prompt-suggest.mjs';
-import { sanitizeConfigPatch } from '../core/daemon/paths.mjs';
+import {
+  DAEMON_BOOT_ID,
+  createBundleController,
+  sanitizeConfigPatch
+} from '../core/daemon/paths.mjs';
 import {
   ALLOWED_EXTERNAL_LINKS,
+  createCdpManager,
   openAllowlistedExternalLink
 } from '../core/daemon/cdp-bridge.mjs';
 import {
@@ -831,4 +837,1042 @@ test('75-settings-ui clears stale status=applied update cache after hot-reloadin
   }, 3);
   assert.equal(daemonOnlyAfterReload.status, 'up_to_date', 'Daemon-only re-injection increments boot seq and must resolve applied state');
   assert.equal(daemonOnlyAfterReload.phase, 'done');
+});
+
+function createSettingsUiHarness({ initialCache, existingBootSeq = 0 } = {}) {
+  const code = ['00-head.js', '75-settings-ui.js', '90-tail.js']
+    .map((f) => fs.readFileSync(path.join(ROOT_DIR, 'core', 'runtime', f), 'utf8'))
+    .join('\n');
+
+  const elementsById = new Map();
+  let nextTimerId = 1;
+  const activeTimers = new Map();
+  const clearedTimers = [];
+  const bindingCalls = [];
+
+  const mkEl = (tag) => {
+    const attrs = new Map();
+    const listeners = new Map();
+    let _id = '';
+    let _innerHTML = '';
+    const el = {
+      tagName: String(tag || 'DIV').toUpperCase(),
+      className: '',
+      textContent: '',
+      style: { removeProperty() {} },
+      children: [],
+      parentElement: null,
+      parentNode: null,
+      isConnected: true,
+      scrollTop: 0,
+      hidden: false,
+      get id() {
+        return _id;
+      },
+      set id(val) {
+        if (_id && elementsById.get(_id) === el) elementsById.delete(_id);
+        _id = String(val || '');
+        if (_id) elementsById.set(_id, el);
+      },
+      get innerHTML() {
+        return _innerHTML;
+      },
+      set innerHTML(val) {
+        _innerHTML = String(val || '');
+      },
+      setAttribute(k, v) {
+        attrs.set(k, String(v));
+      },
+      getAttribute(k) {
+        return attrs.has(k) ? attrs.get(k) : null;
+      },
+      removeAttribute(k) {
+        attrs.delete(k);
+      },
+      hasAttribute(k) {
+        return attrs.has(k);
+      },
+      appendChild(child) {
+        if (child.parentElement && child.parentElement.children) {
+          const i = child.parentElement.children.indexOf(child);
+          if (i >= 0) child.parentElement.children.splice(i, 1);
+        }
+        child.parentElement = el;
+        child.parentNode = el;
+        child.isConnected = el.isConnected;
+        el.children.push(child);
+        if (child.id) elementsById.set(child.id, child);
+        return child;
+      },
+      remove() {
+        if (el.parentElement && el.parentElement.children) {
+          const i = el.parentElement.children.indexOf(el);
+          if (i >= 0) el.parentElement.children.splice(i, 1);
+        }
+        el.parentElement = null;
+        el.parentNode = null;
+        el.isConnected = false;
+        if (_id && elementsById.get(_id) === el) elementsById.delete(_id);
+      },
+      addEventListener(type, fn) {
+        if (!listeners.has(type)) listeners.set(type, []);
+        listeners.get(type).push(fn);
+      },
+      removeEventListener(type, fn) {
+        const list = listeners.get(type);
+        if (!list) return;
+        const idx = list.indexOf(fn);
+        if (idx >= 0) list.splice(idx, 1);
+      },
+      dispatch(type, ev) {
+        for (const fn of (listeners.get(type) || []).slice()) fn(ev);
+      },
+      closest(sel) {
+        if (sel === '.settings-modal-container' || sel === '[role="dialog"]') return dlg;
+        if (sel === '.relative.flex.w-full.h-full') return splitRow;
+        return null;
+      },
+      querySelector(sel) {
+        if (sel === '.ag-s-nav-label') return navLabelStub;
+        if (sel === '.ag-s-nav-ver') return navVerStub;
+        if (sel === '[data-testid^="settings-nav-item-"]') return existingNavItem;
+        if (sel === '.relative.flex.w-full.h-full') return splitRow;
+        return null;
+      },
+      querySelectorAll: () => [],
+      classList: { contains: () => false, toggle() {} }
+    };
+    return el;
+  };
+
+  const navLabelStub = { textContent: '' };
+  const navVerStub = { textContent: '' };
+  const existingNavItem = mkEl('button');
+  const firstNavGroup = mkEl('div');
+  firstNavGroup.appendChild(existingNavItem);
+  const listRoot = mkEl('div');
+  listRoot.appendChild(firstNavGroup);
+  const sidebar = mkEl('div');
+  sidebar.firstElementChild = listRoot;
+  const rightPane = mkEl('div');
+  const splitRow = mkEl('div');
+  splitRow.appendChild(sidebar);
+  splitRow.appendChild(rightPane);
+  const dlg = mkEl('div');
+  dlg.appendChild(splitRow);
+  const headEl = mkEl('head');
+  const bodyEl = mkEl('body');
+  bodyEl.appendChild(dlg);
+
+  const fakeDoc = {
+    head: headEl,
+    body: bodyEl,
+    hidden: false,
+    documentElement: { style: { removeProperty() {} }, setAttribute() {}, getAttribute: () => null, removeAttribute() {} },
+    getElementById: (id) => elementsById.get(id) || null,
+    createElement: (tag) => mkEl(tag),
+    getElementsByTagName: (t) => (t === 'head' ? [headEl] : []),
+    querySelector: (sel) => (sel === '[data-testid="settings-sidebar"]' ? sidebar : null),
+    querySelectorAll: () => [],
+    addEventListener() {},
+    removeEventListener() {}
+  };
+
+  const sandbox = {
+    location: { pathname: '/', href: 'http://127.0.0.1/', search: '?settingsOpen=true' },
+    navigator: { platform: 'MacIntel', onLine: true },
+    history: { pushState() {}, replaceState() {} },
+    addEventListener() {},
+    removeEventListener() {},
+    setInterval: () => 1,
+    clearInterval() {},
+    setTimeout: (fn, ms) => {
+      const id = nextTimerId++;
+      activeTimers.set(id, { id, fn, ms });
+      return id;
+    },
+    clearTimeout: (id) => {
+      if (activeTimers.has(id)) {
+        clearedTimers.push({ id, ms: activeTimers.get(id).ms });
+        activeTimers.delete(id);
+      }
+    },
+    requestAnimationFrame: () => 1,
+    document: fakeDoc,
+    MutationObserver: class { observe() {} disconnect() {} },
+    __ag_bundle_boot_seq: existingBootSeq,
+    __ag_settings_tab_open: true,
+    __ag_settings_update_cache: initialCache,
+    __agCheckPluginUpdate: (raw) => {
+      bindingCalls.push({ name: '__agCheckPluginUpdate', payload: JSON.parse(raw) });
+    },
+    __agApplyPluginUpdate: (raw) => {
+      bindingCalls.push({ name: '__agApplyPluginUpdate', payload: JSON.parse(raw) });
+    },
+    __agGetSettingsState: (raw) => {
+      bindingCalls.push({ name: '__agGetSettingsState', payload: JSON.parse(raw) });
+    }
+  };
+  sandbox.window = sandbox;
+  sandbox.top = sandbox;
+  vm.createContext(sandbox);
+
+  const mount = (bootVersion, opts = {}) => {
+    const { coreHash = '', daemonBootId = '', enabled = true, modules = {} } = opts;
+    const mergedMods = Object.assign(
+      { theme: false, i18n: false, metrics: false, promptSuggestions: false, deadlockHealer: false, zoomShortcuts: false },
+      modules
+    );
+    sandbox.__AG_BOOT_PAYLOAD__ = {
+      version: bootVersion,
+      coreHash,
+      daemonBootId,
+      platform: 'darwin',
+      enabled,
+      cssText: '',
+      customCss: '',
+      themeVars: {},
+      i18nDict: {},
+      modules: mergedMods,
+      selectors: {},
+      userConfig: { modules: mergedMods },
+      customJs: ''
+    };
+    vm.runInContext(`(() => { const __AG_BOOT_PAYLOAD__ = globalThis.__AG_BOOT_PAYLOAD__;\n${code}\n})();`, sandbox);
+  };
+
+  const clickInPane = (selector) => {
+    const pane = elementsById.get('ag-settings-pane');
+    assert.ok(pane, 'settings pane must be mounted');
+    pane.dispatch('click', {
+      preventDefault() {},
+      stopPropagation() {},
+      detail: 1,
+      target: { closest: (sel) => (sel === selector ? {} : null) }
+    });
+  };
+
+  const cleanup = () => {
+    const fns = (sandbox.__ag_cleanup_fns || []).splice(0);
+    for (const fn of fns) fn();
+  };
+
+  const getPaneHtml = () => {
+    const pane = elementsById.get('ag-settings-pane');
+    return pane ? pane.innerHTML : '';
+  };
+
+  return {
+    sandbox,
+    mount,
+    clickInPane,
+    cleanup,
+    getPaneHtml,
+    getNavVersion: () => navVerStub.textContent,
+    activeTimers,
+    clearedTimers,
+    bindingCalls
+  };
+}
+
+test('75-settings-ui recovers from hot-reload during phase=checking without deadlocking buttons (Issue #17)', () => {
+  // Case A: Pre-existing transient cache with status=idle -> resets cleanly to idle and enables check button
+  const hIdle = createSettingsUiHarness({
+    initialCache: {
+      phase: 'checking',
+      status: 'idle',
+      currentVersion: '1.4.2',
+      latestVersion: '',
+      cachedPatchVersion: '1.4.2-stable-aaa'
+    }
+  });
+  hIdle.mount('1.4.2-stable-aaa');
+  assert.equal(hIdle.sandbox.__ag_settings_update_cache.phase, 'idle');
+  assert.equal(hIdle.sandbox.__ag_settings_update_cache.status, 'idle');
+  assert.equal(hIdle.sandbox.__ag_settings_update_cache.currentVersion, '1.4.2');
+  assert.equal(hIdle.sandbox.__ag_settings_update_cache.cachedPatchVersion, '1.4.2-stable-aaa');
+  assert.doesNotMatch(hIdle.getPaneHtml(), /id="ag-s-check-update"[^>]*disabled/, 'Check button must not stay disabled after hot-reload');
+  hIdle.cleanup();
+
+  // Case B: Pre-existing transient cache with prior status=update_available -> restores phase=done & enables both buttons
+  const hAvail = createSettingsUiHarness({
+    initialCache: {
+      phase: 'checking',
+      status: 'update_available',
+      currentVersion: '1.4.2',
+      latestVersion: '1.4.3',
+      updateAvailable: true,
+      targetRef: 'v1.4.3',
+      cachedPatchVersion: '1.4.2-stable-aaa'
+    }
+  });
+  hAvail.mount('1.4.2-stable-aaa');
+  assert.equal(hAvail.sandbox.__ag_settings_update_cache.phase, 'done');
+  assert.equal(hAvail.sandbox.__ag_settings_update_cache.status, 'update_available');
+  assert.equal(hAvail.sandbox.__ag_settings_update_cache.latestVersion, '1.4.3');
+  assert.doesNotMatch(hAvail.getPaneHtml(), /id="ag-s-check-update"[^>]*disabled/);
+  assert.doesNotMatch(hAvail.getPaneHtml(), /id="ag-s-apply-update"[^>]*disabled/);
+  hAvail.cleanup();
+});
+
+test('75-settings-ui recovers from hot-reload during phase=updating on same and upgraded versions (Issue #17)', () => {
+  // Case A: Same-version hot-reload during updating -> clears busy phase and restores update_available
+  const hSame = createSettingsUiHarness({
+    initialCache: {
+      phase: 'updating',
+      status: 'update_available',
+      currentVersion: '1.4.2',
+      latestVersion: '1.4.3',
+      updateAvailable: true,
+      targetRef: 'v1.4.3',
+      cachedPatchVersion: '1.4.2-stable-same'
+    }
+  });
+  hSame.mount('1.4.2-stable-same');
+  assert.equal(hSame.sandbox.__ag_settings_update_cache.phase, 'done');
+  assert.equal(hSame.sandbox.__ag_settings_update_cache.status, 'update_available');
+  assert.equal(hSame.sandbox.__ag_settings_update_cache.interruptedPhase, undefined);
+  assert.doesNotMatch(hSame.getPaneHtml(), /id="ag-s-check-update"[^>]*disabled/);
+  assert.doesNotMatch(hSame.getPaneHtml(), /id="ag-s-apply-update"[^>]*disabled/);
+  hSame.cleanup();
+
+  // Case B: Pre-fix 1.4.1 cache mid-updating hot-reloads to upgraded 1.4.2 -> converges cleanly to up_to_date
+  const hUpgradedPreFix = createSettingsUiHarness({
+    initialCache: {
+      phase: 'updating',
+      status: 'update_available',
+      currentVersion: '1.4.1',
+      latestVersion: '1.4.2',
+      updateAvailable: true,
+      targetRef: 'v1.4.2'
+    }
+  });
+  hUpgradedPreFix.mount('1.4.2-stable-new');
+  assert.equal(hUpgradedPreFix.sandbox.__ag_settings_update_cache.phase, 'done');
+  assert.equal(hUpgradedPreFix.sandbox.__ag_settings_update_cache.status, 'up_to_date');
+  assert.equal(hUpgradedPreFix.sandbox.__ag_settings_update_cache.currentVersion, '1.4.2');
+  assert.equal(hUpgradedPreFix.sandbox.__ag_settings_update_cache.latestVersion, '1.4.2');
+  assert.equal(hUpgradedPreFix.sandbox.__ag_settings_update_cache.cachedPatchVersion, '1.4.2-stable-new');
+  assert.match(hUpgradedPreFix.getPaneHtml(), />v1\.4\.2</);
+  assert.doesNotMatch(hUpgradedPreFix.getPaneHtml(), />v1\.4\.1</);
+  hUpgradedPreFix.cleanup();
+
+  // Case C: Live end-to-end upgrade mid-updating (1.4.1 clicks Update Now -> 1.4.2 hot-reloads before RPC replies)
+  const hLiveUpgrade = createSettingsUiHarness({
+    initialCache: {
+      phase: 'done',
+      status: 'update_available',
+      currentVersion: '1.4.1',
+      latestVersion: '1.4.2',
+      updateAvailable: true,
+      targetRef: 'v1.4.2',
+      cachedPatchVersion: '1.4.1-stable-old'
+    }
+  });
+  hLiveUpgrade.mount('1.4.1-stable-old');
+  hLiveUpgrade.clickInPane('#ag-s-apply-update');
+  assert.equal(hLiveUpgrade.sandbox.__ag_settings_update_cache.phase, 'updating');
+  assert.match(hLiveUpgrade.getPaneHtml(), /id="ag-s-apply-update"[^>]*disabled/);
+  const applyCall = hLiveUpgrade.bindingCalls.find((c) => c.name === '__agApplyPluginUpdate');
+  assert.ok(applyCall, 'Clicking apply must invoke __agApplyPluginUpdate');
+
+  // Hot-reload new 1.4.2 bundle before RPC returns (00-head.js runs old cleanup, then 75 mounts fresh)
+  hLiveUpgrade.mount('1.4.2-stable-new');
+  assert.equal(hLiveUpgrade.sandbox.__ag_settings_update_cache.phase, 'done');
+  assert.equal(hLiveUpgrade.sandbox.__ag_settings_update_cache.status, 'up_to_date');
+  assert.equal(hLiveUpgrade.sandbox.__ag_settings_update_cache.currentVersion, '1.4.2');
+  assert.equal(hLiveUpgrade.sandbox.__ag_settings_update_cache.latestVersion, '1.4.2');
+  assert.equal(hLiveUpgrade.sandbox.__ag_settings_update_cache.interruptedPhase, undefined);
+  assert.equal(hLiveUpgrade.getNavVersion(), 'v1.4.2');
+  assert.match(hLiveUpgrade.getPaneHtml(), />v1\.4\.2</);
+  assert.doesNotMatch(hLiveUpgrade.getPaneHtml(), />v1\.4\.1</);
+  assert.doesNotMatch(hLiveUpgrade.getPaneHtml(), /id="ag-s-check-update"[^>]*disabled/);
+  // Late reply from old apply request must be ignored
+  hLiveUpgrade.sandbox.__ag_on_settings_state(applyCall.payload.reqId, { ok: false, error: 'stale failure' });
+  assert.equal(hLiveUpgrade.sandbox.__ag_settings_update_cache.status, 'up_to_date');
+  hLiveUpgrade.cleanup();
+
+  // Case D: Cross-version reload during updating where landed version != target latestVersion resets to idle instead of up_to_date
+  const hMismatchTarget = createSettingsUiHarness({
+    initialCache: {
+      phase: 'updating',
+      status: 'update_available',
+      currentVersion: '1.4.1',
+      latestVersion: '1.4.3',
+      updateAvailable: true,
+      targetRef: 'v1.4.3',
+      cachedPatchVersion: '1.4.1-stable-old'
+    }
+  });
+  hMismatchTarget.mount('1.4.2-stable-mid');
+  assert.equal(hMismatchTarget.sandbox.__ag_settings_update_cache.phase, 'idle');
+  assert.equal(hMismatchTarget.sandbox.__ag_settings_update_cache.status, 'idle');
+  assert.equal(hMismatchTarget.sandbox.__ag_settings_update_cache.currentVersion, '1.4.2');
+  hMismatchTarget.cleanup();
+});
+
+test('75-settings-ui invalidates cross-version stale caches and always aligns bottom version badge with live bundle (Issue #17)', () => {
+  // Case A: 1.4.1 up_to_date cache (legacy without cachedPatchVersion) reloaded onto 1.4.2
+  const hUpToDate = createSettingsUiHarness({
+    initialCache: {
+      phase: 'done',
+      status: 'up_to_date',
+      currentVersion: '1.4.1',
+      latestVersion: '1.4.1'
+    }
+  });
+  hUpToDate.mount('1.4.2-stable-new');
+  assert.equal(hUpToDate.sandbox.__ag_settings_update_cache.phase, 'idle');
+  assert.equal(hUpToDate.sandbox.__ag_settings_update_cache.status, 'idle');
+  assert.equal(hUpToDate.sandbox.__ag_settings_update_cache.currentVersion, '1.4.2');
+  assert.equal(hUpToDate.getNavVersion(), 'v1.4.2');
+  assert.match(hUpToDate.getPaneHtml(), /<span class="ag-s-upd-pill">v1\.4\.2<\/span>/);
+  assert.doesNotMatch(hUpToDate.getPaneHtml(), /v1\.4\.1/);
+  hUpToDate.cleanup();
+
+  // Case B: 1.4.1 update_available cache reloaded onto 1.4.2
+  const hUpdateAvail = createSettingsUiHarness({
+    initialCache: {
+      phase: 'done',
+      status: 'update_available',
+      currentVersion: '1.4.1',
+      latestVersion: '1.4.2',
+      updateAvailable: true,
+      targetRef: 'v1.4.2',
+      cachedPatchVersion: '1.4.1-stable-old'
+    }
+  });
+  hUpdateAvail.mount('1.4.2-stable-new');
+  assert.equal(hUpdateAvail.sandbox.__ag_settings_update_cache.phase, 'idle');
+  assert.equal(hUpdateAvail.sandbox.__ag_settings_update_cache.status, 'idle');
+  assert.equal(hUpdateAvail.sandbox.__ag_settings_update_cache.updateAvailable, false);
+  assert.equal(hUpdateAvail.sandbox.__ag_settings_update_cache.currentVersion, '1.4.2');
+  assert.match(hUpdateAvail.getPaneHtml(), /<span class="ag-s-upd-pill">v1\.4\.2<\/span>/);
+  assert.doesNotMatch(hUpdateAvail.getPaneHtml(), /v1\.4\.1/);
+  assert.doesNotMatch(hUpdateAvail.getPaneHtml(), /id="ag-s-apply-update"/);
+  hUpdateAvail.cleanup();
+
+  // Case C: Same-semver hotfix (different PATCH_VERSION hash) invalidates stale main_diff cache
+  const hHotfix = createSettingsUiHarness({
+    initialCache: {
+      phase: 'done',
+      status: 'main_diff',
+      currentVersion: '1.4.2',
+      latestVersion: '1.4.2',
+      canSyncMain: true,
+      changedCount: 2,
+      cachedPatchVersion: '1.4.2-stable-hash1'
+    }
+  });
+  hHotfix.mount('1.4.2-stable-hash2');
+  assert.equal(hHotfix.sandbox.__ag_settings_update_cache.phase, 'idle');
+  assert.equal(hHotfix.sandbox.__ag_settings_update_cache.status, 'idle');
+  assert.equal(hHotfix.sandbox.__ag_settings_update_cache.cachedPatchVersion, '1.4.2-stable-hash2');
+  hHotfix.cleanup();
+
+  // Case D: Status=applied (before hot-reload) still displays target currentVersion in bottom pill
+  const hApplied = createSettingsUiHarness({
+    initialCache: {
+      phase: 'applied',
+      status: 'applied',
+      currentVersion: '1.4.2',
+      latestVersion: '1.4.2',
+      appliedFromPatchVersion: '1.4.0-stable-old',
+      appliedAtBootSeq: 2
+    },
+    existingBootSeq: 1
+  });
+  hApplied.mount('1.4.0-stable-old');
+  assert.equal(hApplied.sandbox.__ag_settings_update_cache.status, 'applied');
+  assert.match(hApplied.getPaneHtml(), /<span class="ag-s-upd-pill">v1\.4\.2<\/span>/);
+  hApplied.cleanup();
+});
+
+test('75-settings-ui cleanup sanitizes transient checking/updating cache and cancels pending RPC timers (Issue #17)', () => {
+  // Case A: Disposing mid-checking cancels 20s RPC timeout and reverts phase from checking
+  const hCheck = createSettingsUiHarness();
+  hCheck.mount('1.4.2-stable-clean');
+  hCheck.clickInPane('#ag-s-check-update');
+  assert.equal(hCheck.sandbox.__ag_settings_update_cache.phase, 'checking');
+  assert.equal(hCheck.sandbox.__ag_settings_update_cache.cachedPatchVersion, '1.4.2-stable-clean');
+  assert.ok(
+    Array.from(hCheck.activeTimers.values()).some((t) => t.ms === 20000),
+    'In-flight checkPluginUpdate must register a 20s timeout timer'
+  );
+
+  hCheck.cleanup();
+  assert.equal(hCheck.activeTimers.size, 0, 'All pending RPC timers must be cleared on cleanup');
+  assert.ok(
+    hCheck.clearedTimers.some((t) => t.ms === 20000),
+    'Cleanup must explicitly clearTimeout the 20s checkPluginUpdate timer'
+  );
+  assert.notEqual(hCheck.sandbox.__ag_settings_update_cache.phase, 'checking');
+  assert.equal(hCheck.sandbox.__ag_settings_update_cache.phase, 'idle');
+
+  // Case B: Disposing mid-updating cancels 60s RPC timeout and reverts phase from updating
+  const hApply = createSettingsUiHarness({
+    initialCache: {
+      phase: 'done',
+      status: 'update_available',
+      currentVersion: '1.4.2',
+      latestVersion: '1.4.3',
+      updateAvailable: true,
+      targetRef: 'v1.4.3',
+      cachedPatchVersion: '1.4.2-stable-clean'
+    }
+  });
+  hApply.mount('1.4.2-stable-clean');
+  hApply.clickInPane('#ag-s-apply-update');
+  assert.equal(hApply.sandbox.__ag_settings_update_cache.phase, 'updating');
+  assert.ok(
+    Array.from(hApply.activeTimers.values()).some((t) => t.ms === 60000),
+    'In-flight applyPluginUpdateAction must register a 60s timeout timer'
+  );
+
+  hApply.cleanup();
+  assert.equal(hApply.activeTimers.size, 0, 'All pending RPC timers must be cleared on cleanup');
+  assert.ok(
+    hApply.clearedTimers.some((t) => t.ms === 60000),
+    'Cleanup must explicitly clearTimeout the 60s applyPluginUpdateAction timer'
+  );
+  assert.equal(hApply.sandbox.__ag_settings_update_cache.phase, 'done');
+  assert.equal(hApply.sandbox.__ag_settings_update_cache.status, 'update_available');
+});
+
+test('paths.mjs decouples coreHash and daemonBootId from user config in bootPayload (Issue #17-A/D)', () => {
+  assert.ok(typeof DAEMON_BOOT_ID === 'string' && DAEMON_BOOT_ID.length >= 8, 'DAEMON_BOOT_ID must be non-empty');
+
+  const ctrlSafe = createBundleController({ safeMode: true, daemonBootId: 'boot-test-1' });
+  ctrlSafe.rebuildBundleIfNeeded(true);
+  const stSafe = ctrlSafe.getState();
+
+  const ctrlNormal = createBundleController({ safeMode: false, daemonBootId: 'boot-test-1' });
+  ctrlNormal.rebuildBundleIfNeeded(true);
+  const stNormal = ctrlNormal.getState();
+
+  assert.ok(stSafe.cachedCoreHash && stSafe.cachedCoreHash.length === 12);
+  assert.equal(stSafe.daemonBootId, 'boot-test-1');
+  assert.equal(
+    stSafe.cachedCoreHash,
+    stNormal.cachedCoreHash,
+    'coreHash must remain identical regardless of user config (safeMode vs user/config.json)'
+  );
+  assert.ok(
+    stSafe.cachedInjectScript.includes(`"coreHash":${JSON.stringify(stSafe.cachedCoreHash)}`),
+    'bootPayload embedded in injected script must include coreHash'
+  );
+  assert.ok(
+    stSafe.cachedInjectScript.includes('"daemonBootId":"boot-test-1"'),
+    'bootPayload embedded in injected script must include daemonBootId'
+  );
+
+  // Separate daemon process gets a distinct daemonBootId while sharing deterministic coreHash
+  const ctrlOther = createBundleController({ safeMode: true, daemonBootId: 'boot-test-2' });
+  ctrlOther.rebuildBundleIfNeeded(true);
+  assert.equal(ctrlOther.getState().cachedCoreHash, stSafe.cachedCoreHash);
+  assert.notEqual(ctrlOther.getState().daemonBootId, stSafe.daemonBootId);
+});
+
+test('75-settings-ui preserves check results across user config toggles when coreHash & daemonBootId stay unchanged (Issue #17-A)', () => {
+  for (const status of ['update_available', 'main_diff', 'up_to_date', 'ahead']) {
+    const h = createSettingsUiHarness({
+      initialCache: {
+        phase: 'done',
+        status,
+        currentVersion: '1.4.2',
+        latestVersion: status === 'update_available' ? '1.4.3' : '1.4.2',
+        updateAvailable: status === 'update_available',
+        canSyncMain: status === 'main_diff',
+        changedCount: status === 'main_diff' ? 3 : 0,
+        targetRef: status === 'update_available' ? 'v1.4.3' : 'main',
+        cachedCoreHash: 'corehashaaaa',
+        cachedDaemonBootId: 'boot-proc-1',
+        cachedPatchVersion: '1.4.2-stable-cfg1'
+      }
+    });
+    // User toggles a setting -> PATCH_VERSION changes (cfg1 -> cfg2) while coreHash & daemonBootId stay identical
+    h.mount('1.4.2-stable-cfg2', { coreHash: 'corehashaaaa', daemonBootId: 'boot-proc-1' });
+    assert.equal(h.sandbox.__ag_settings_update_cache.status, status, `${status} must survive config-only hot-reload`);
+    assert.equal(h.sandbox.__ag_settings_update_cache.phase, 'done');
+    assert.equal(h.sandbox.__ag_settings_update_cache.cachedCoreHash, 'corehashaaaa');
+    assert.equal(h.sandbox.__ag_settings_update_cache.cachedDaemonBootId, 'boot-proc-1');
+    assert.equal(h.sandbox.__ag_settings_update_cache.cachedPatchVersion, '1.4.2-stable-cfg2');
+    h.cleanup();
+  }
+});
+
+test('75-settings-ui does not falsely converge main_diff updating on user config toggle (Issue #17-B)', () => {
+  const h = createSettingsUiHarness({
+    initialCache: {
+      phase: 'done',
+      status: 'main_diff',
+      currentVersion: '1.4.2',
+      latestVersion: '1.4.2',
+      canSyncMain: true,
+      changedCount: 2,
+      targetRef: 'main',
+      cachedCoreHash: 'corehashaaaa',
+      cachedDaemonBootId: 'boot-proc-1',
+      cachedPatchVersion: '1.4.2-stable-cfg1'
+    }
+  });
+  h.mount('1.4.2-stable-cfg1', { coreHash: 'corehashaaaa', daemonBootId: 'boot-proc-1' });
+  h.clickInPane('#ag-s-apply-update');
+  assert.equal(h.sandbox.__ag_settings_update_cache.phase, 'updating');
+
+  // User toggles a setting switch mid-updating -> PATCH_VERSION changes, coreHash & daemonBootId stay unchanged
+  h.mount('1.4.2-stable-cfg2', { coreHash: 'corehashaaaa', daemonBootId: 'boot-proc-1' });
+  assert.equal(
+    h.sandbox.__ag_settings_update_cache.status,
+    'main_diff',
+    'Config-only hot-reload mid-updating must NOT falsely converge to up_to_date'
+  );
+  assert.equal(h.sandbox.__ag_settings_update_cache.phase, 'done');
+  assert.doesNotMatch(h.getPaneHtml(), /id="ag-s-apply-update"[^>]*disabled/);
+  h.cleanup();
+});
+
+test('75-settings-ui status=applied ignores same-daemon config/refresh reloads and converges only on real upgrade (Issue #17-C)', () => {
+  // Case A: Semver upgrade 1.4.2 -> 1.4.3 waiting for restart; user toggles setting on old 1.4.2 daemon (bootSeq increments)
+  const hSemver = createSettingsUiHarness({
+    initialCache: {
+      phase: 'applied',
+      status: 'applied',
+      currentVersion: '1.4.3',
+      latestVersion: '1.4.3',
+      appliedFromVersion: '1.4.2',
+      appliedFromCoreHash: 'core-old',
+      appliedFromDaemonBootId: 'boot-old',
+      appliedFromPatchVersion: '1.4.2-stable-cfg1',
+      appliedAtBootSeq: 2,
+      appliedAt: Date.now() - 1000
+    },
+    existingBootSeq: 2
+  });
+  // Hot-reload still on old 1.4.2 daemon (bootSeq becomes 3, PATCH_VERSION changes cfg1 -> cfg2)
+  hSemver.mount('1.4.2-stable-cfg2', { coreHash: 'core-old', daemonBootId: 'boot-old' });
+  assert.equal(
+    hSemver.sandbox.__ag_settings_update_cache.status,
+    'applied',
+    'Semver upgrade must NEVER converge while still running old 1.4.2 bundle'
+  );
+  assert.ok(
+    Array.from(hSemver.activeTimers.values()).some((t) => t.ms >= 500 && t.ms <= 20000),
+    'Re-mounting while still applied with appliedAt must re-arm reload timeout'
+  );
+
+  // Now real 1.4.3 daemon restarts & injects -> converges cleanly to up_to_date
+  hSemver.mount('1.4.3-stable-new', { coreHash: 'core-new', daemonBootId: 'boot-new' });
+  assert.equal(hSemver.sandbox.__ag_settings_update_cache.status, 'up_to_date');
+  assert.equal(hSemver.sandbox.__ag_settings_update_cache.phase, 'done');
+  assert.equal(hSemver.sandbox.__ag_settings_update_cache.currentVersion, '1.4.3');
+  hSemver.cleanup();
+
+  // Case B: Same-semver main_diff applied (1.4.2 -> 1.4.2); user toggles setting on SAME daemon (bootSeq increments, coreHash & daemonBootId unchanged)
+  const hSameVer = createSettingsUiHarness({
+    initialCache: {
+      phase: 'applied',
+      status: 'applied',
+      currentVersion: '1.4.2',
+      latestVersion: '1.4.2',
+      appliedFromVersion: '1.4.2',
+      appliedFromCoreHash: 'core-old',
+      appliedFromDaemonBootId: 'boot-old',
+      appliedFromPatchVersion: '1.4.2-stable-cfg1',
+      appliedAtBootSeq: 2
+    },
+    existingBootSeq: 2
+  });
+  hSameVer.mount('1.4.2-stable-cfg2', { coreHash: 'core-old', daemonBootId: 'boot-old' });
+  assert.equal(
+    hSameVer.sandbox.__ag_settings_update_cache.status,
+    'applied',
+    'Same-semver applied state must NOT converge on same-daemon config toggle'
+  );
+  hSameVer.cleanup();
+});
+
+test('75-settings-ui converges daemon-only main_diff updates via coreHash or daemonBootId change (Issue #17-D)', () => {
+  // Case A: Mid-updating daemon-only main_diff (same semver 1.4.2, new coreHash from manifest.json + new daemonBootId)
+  const hUpdating = createSettingsUiHarness({
+    initialCache: {
+      phase: 'done',
+      status: 'main_diff',
+      currentVersion: '1.4.2',
+      latestVersion: '1.4.2',
+      canSyncMain: true,
+      changedCount: 1,
+      targetRef: 'main',
+      cachedCoreHash: 'core-before',
+      cachedDaemonBootId: 'boot-before',
+      cachedPatchVersion: '1.4.2-stable-same'
+    }
+  });
+  hUpdating.mount('1.4.2-stable-same', { coreHash: 'core-before', daemonBootId: 'boot-before' });
+  hUpdating.clickInPane('#ag-s-apply-update');
+  assert.equal(hUpdating.sandbox.__ag_settings_update_cache.phase, 'updating');
+
+  // New daemon injects with updated manifest coreHash and new daemonBootId (even with same semver & patch version)
+  hUpdating.mount('1.4.2-stable-same', { coreHash: 'core-after', daemonBootId: 'boot-after' });
+  assert.equal(hUpdating.sandbox.__ag_settings_update_cache.status, 'up_to_date');
+  assert.equal(hUpdating.sandbox.__ag_settings_update_cache.phase, 'done');
+  assert.equal(hUpdating.sandbox.__ag_settings_update_cache.cachedCoreHash, 'core-after');
+  assert.equal(hUpdating.sandbox.__ag_settings_update_cache.cachedDaemonBootId, 'boot-after');
+  hUpdating.cleanup();
+
+  // Case B: Mid-applied daemon-only main_diff (even if coreHash unchanged in sparse install, daemonBootId change converges)
+  const hAppliedDaemonOnly = createSettingsUiHarness({
+    initialCache: {
+      phase: 'applied',
+      status: 'applied',
+      currentVersion: '1.4.2',
+      latestVersion: '1.4.2',
+      appliedFromVersion: '1.4.2',
+      appliedFromCoreHash: 'core-sparse',
+      appliedFromDaemonBootId: 'boot-before',
+      appliedFromPatchVersion: '1.4.2-stable-same',
+      appliedAtBootSeq: 2
+    },
+    existingBootSeq: 2
+  });
+  hAppliedDaemonOnly.mount('1.4.2-stable-same', { coreHash: 'core-sparse', daemonBootId: 'boot-after' });
+  assert.equal(hAppliedDaemonOnly.sandbox.__ag_settings_update_cache.status, 'up_to_date');
+  assert.equal(hAppliedDaemonOnly.sandbox.__ag_settings_update_cache.phase, 'done');
+  hAppliedDaemonOnly.cleanup();
+});
+
+test('75-settings-ui never leaves empty status=error when hot-reloading mid-recheck and aligns apply timeout + Zh/En quota labels (Issue #17-E & P1)', async () => {
+  // Case A: Starting re-check from prior status=error resets status to idle; hot-reload mid-checking never renders empty error
+  const hRecheck = createSettingsUiHarness({
+    initialCache: {
+      phase: 'done',
+      status: 'error',
+      currentVersion: '1.4.2',
+      error: 'Network error',
+      cachedCoreHash: 'core-1',
+      cachedDaemonBootId: 'boot-1',
+      cachedPatchVersion: '1.4.2-stable-cfg1'
+    }
+  });
+  hRecheck.mount('1.4.2-stable-cfg1', { coreHash: 'core-1', daemonBootId: 'boot-1', modules: { i18n: true } });
+  // Also verify Zh bilingual symmetry for Model Quota labels
+  assert.match(hRecheck.getPaneHtml(), /模型额度（状态栏面板）/);
+  assert.match(hRecheck.getPaneHtml(), /模型额度（侧边栏）/);
+
+  hRecheck.clickInPane('#ag-s-check-update');
+  assert.equal(hRecheck.sandbox.__ag_settings_update_cache.phase, 'checking');
+  assert.equal(hRecheck.sandbox.__ag_settings_update_cache.status, 'idle');
+
+  // Hot-reload mid-recheck (same coreHash & daemonBootId)
+  hRecheck.mount('1.4.2-stable-cfg2', { coreHash: 'core-1', daemonBootId: 'boot-1', modules: { i18n: true } });
+  assert.equal(hRecheck.sandbox.__ag_settings_update_cache.phase, 'idle');
+  assert.equal(hRecheck.sandbox.__ag_settings_update_cache.status, 'idle');
+  assert.doesNotMatch(hRecheck.getPaneHtml(), /检查失败/);
+  hRecheck.cleanup();
+
+  // Case B: Sanitizer also recovers pre-existing corrupted { phase: 'checking', status: 'error', error: '' }
+  const hCorrupt = createSettingsUiHarness({
+    initialCache: {
+      phase: 'checking',
+      status: 'error',
+      currentVersion: '1.4.2',
+      error: '',
+      cachedCoreHash: 'core-1',
+      cachedDaemonBootId: 'boot-1',
+      cachedPatchVersion: '1.4.2-stable-cfg1'
+    }
+  });
+  hCorrupt.mount('1.4.2-stable-cfg1', { coreHash: 'core-1', daemonBootId: 'boot-1' });
+  assert.equal(hCorrupt.sandbox.__ag_settings_update_cache.phase, 'idle');
+  assert.equal(hCorrupt.sandbox.__ag_settings_update_cache.status, 'idle');
+  // En bilingual symmetry check
+  assert.match(hCorrupt.getPaneHtml(), /Model Quota \(Panel\)/);
+  assert.match(hCorrupt.getPaneHtml(), /Model Quota \(Sidebar\)/);
+  hCorrupt.cleanup();
+
+  // Case C: Apply timeout timer is 20000ms (aligned above backend 18000ms lock release)
+  const hTimeout = createSettingsUiHarness({
+    initialCache: {
+      phase: 'done',
+      status: 'update_available',
+      currentVersion: '1.4.2',
+      latestVersion: '1.4.3',
+      updateAvailable: true,
+      targetRef: 'v1.4.3',
+      cachedCoreHash: 'core-1',
+      cachedDaemonBootId: 'boot-1',
+      cachedPatchVersion: '1.4.2-stable-cfg1'
+    }
+  });
+  hTimeout.mount('1.4.2-stable-cfg1', { coreHash: 'core-1', daemonBootId: 'boot-1' });
+  hTimeout.clickInPane('#ag-s-apply-update');
+  const applyCall = hTimeout.bindingCalls.find((c) => c.name === '__agApplyPluginUpdate');
+  assert.ok(applyCall);
+  hTimeout.sandbox.__ag_on_settings_state(applyCall.payload.reqId, { ok: true, version: '1.4.3', restarting: true });
+  await Promise.resolve();
+  assert.equal(hTimeout.sandbox.__ag_settings_update_cache.status, 'applied');
+  assert.equal(hTimeout.sandbox.__ag_settings_update_cache.appliedFromCoreHash, 'core-1');
+  assert.equal(hTimeout.sandbox.__ag_settings_update_cache.appliedFromDaemonBootId, 'boot-1');
+  assert.equal(hTimeout.sandbox.__ag_settings_update_cache.appliedFromVersion, '1.4.2');
+  assert.ok(
+    Array.from(hTimeout.activeTimers.values()).some((t) => t.ms === 20000),
+    'Frontend apply reload timeout must be 20000ms to outlast backend 18000ms lock release'
+  );
+  hTimeout.cleanup();
+});
+
+test('00-head.js enabled:false sets exact PATCH_VERSION (no -disabled loop) and clears __ag_on_route_change (Global-A)', () => {
+  const code = ['00-head.js', '90-tail.js']
+    .map((f) => fs.readFileSync(path.join(ROOT_DIR, 'core', 'runtime', f), 'utf8'))
+    .join('\n');
+
+  const headEl = { appendChild() {} };
+  const fakeDoc = {
+    head: headEl,
+    body: {
+      classList: { contains: () => false },
+      style: { removeProperty() {} },
+      querySelectorAll: () => []
+    },
+    hidden: false,
+    documentElement: {
+      style: { removeProperty() {} },
+      setAttribute() {},
+      getAttribute: () => null,
+      removeAttribute() {}
+    },
+    getElementById: () => null,
+    createElement: () => ({ style: {}, setAttribute() {}, removeAttribute() {}, remove() {} }),
+    getElementsByTagName: (t) => (t === 'head' ? [headEl] : []),
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createTreeWalker: () => ({ nextNode: () => false }),
+    addEventListener() {},
+    removeEventListener() {}
+  };
+
+  const sandbox = {
+    location: { pathname: '/', href: 'http://127.0.0.1/', search: '' },
+    navigator: { platform: 'MacIntel', onLine: true },
+    history: { pushState() {}, replaceState() {} },
+    document: fakeDoc,
+    NodeFilter: { SHOW_TEXT: 4 },
+    addEventListener() {},
+    removeEventListener() {},
+    clearInterval() {},
+    __ag_on_route_change: () => 'stale-handler',
+    __AG_BOOT_PAYLOAD__: {
+      version: '1.4.2-stable-disabledhash',
+      coreHash: 'core12345678',
+      daemonBootId: 'boot-1',
+      platform: 'darwin',
+      enabled: false,
+      cssText: '',
+      customCss: '',
+      themeVars: {},
+      i18nDict: {},
+      modules: {},
+      selectors: {},
+      userConfig: { enabled: false },
+      customJs: ''
+    }
+  };
+  sandbox.window = sandbox;
+  sandbox.top = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(`const __AG_BOOT_PAYLOAD__ = globalThis.__AG_BOOT_PAYLOAD__;\n${code}`, sandbox);
+
+  assert.equal(
+    sandbox.__ag_patch_version,
+    '1.4.2-stable-disabledhash',
+    'Disabled teardown must set window.__ag_patch_version === PATCH_VERSION so cdp-bridge heartbeat converges without re-injection loop'
+  );
+  assert.equal(sandbox.__ag_on_route_change, null, 'Disabled teardown must clear window.__ag_on_route_change');
+  assert.equal(sandbox.__ag_body_ready, false);
+
+  // Verify cdp-bridge heartbeat check expression evaluates to true when enabled:false
+  const cachedPatchVersion = '1.4.2-stable-disabledhash';
+  const activeEnabled = false;
+  const hbExpr =
+    '((window.__ag_last_daemon_hb = Date.now()), window.__ag_refresh_wait_ui && window.__ag_refresh_wait_ui(), window.__ag_patch_version === ' +
+    JSON.stringify(cachedPatchVersion) +
+    ' && (' +
+    JSON.stringify(!activeEnabled) +
+    ' || (window.__ag_body_ready === true && !!document.getElementById("ag-codex-theme"))))';
+  assert.equal(vm.runInContext(hbExpr, sandbox), true, 'Heartbeat check must return true once disabled teardown ran');
+});
+
+test('cdp-bridge.mjs __agRequestPromptSuggestion forwards suggestWithMeta completed flag and replies on guard reject (Issue #16-B)', async () => {
+  const OrigWebSocket = globalThis.WebSocket;
+  const deliveredPayloads = [];
+  let activeMockWs = null;
+
+  class MockWebSocket {
+    static OPEN = 1;
+    static CLOSED = 3;
+    constructor(url) {
+      this.url = url;
+      this.readyState = MockWebSocket.OPEN;
+      this._listeners = new Map();
+      activeMockWs = this;
+      queueMicrotask(() => this._emit('open', {}));
+    }
+    addEventListener(type, fn) {
+      if (!this._listeners.has(type)) this._listeners.set(type, []);
+      this._listeners.get(type).push(fn);
+    }
+    _emit(type, ev) {
+      for (const fn of (this._listeners.get(type) || []).slice()) fn(ev);
+    }
+    send(raw) {
+      const msg = JSON.parse(raw);
+      if (msg.method === 'Runtime.evaluate' && typeof msg.params?.expression === 'string') {
+        const m = msg.params.expression.match(/window\.__ag_on_prompt_suggestion\(([^,]+),\s*(\{[\s\S]*\})\)/);
+        if (m) {
+          deliveredPayloads.push({ reqId: JSON.parse(m[1]), payload: JSON.parse(m[2]) });
+        }
+        if (msg.params.expression.includes('const isHost = Boolean(')) {
+          queueMicrotask(() =>
+            this._emit('message', { data: JSON.stringify({ id: msg.id, result: { result: { value: true } } }) })
+          );
+          return;
+        }
+      }
+      queueMicrotask(() => this._emit('message', { data: JSON.stringify({ id: msg.id, result: {} }) }));
+    }
+    close() {
+      this.readyState = MockWebSocket.CLOSED;
+      this._emit('close', {});
+    }
+  }
+
+  let serverPort = 0;
+  const server = http.createServer((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify([
+        {
+          id: 'target-1',
+          type: 'page',
+          title: 'Antigravity',
+          url: 'http://127.0.0.1/c/11111111-1111-1111-1111-111111111111',
+          webSocketDebuggerUrl: `ws://127.0.0.1:${serverPort}/devtools/page/target-1`
+        }
+      ])
+    );
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  serverPort = server.address().port;
+
+  let promptSuggestionsEnabled = true;
+  let suggestImpl = {
+    suggestWithMeta: async () => ({ completed: false, suggestion: '' })
+  };
+  const promptSuggesterObj = {
+    suggestWithMeta: (args) => suggestImpl.suggestWithMeta(args),
+    suggest: (args) => suggestImpl.suggest(args),
+    syncState: () => {},
+    stop: () => {}
+  };
+  const bundleCtrl = {
+    rebuildBundleIfNeeded: () => false,
+    getState: () => ({
+      activeConfig: {
+        enabled: true,
+        modules: { metrics: false, promptSuggestions: promptSuggestionsEnabled, sshRemote: false },
+        allowedOrigins: ['http://127.0.0.1'],
+        endpoints: [
+          { channel: 'stable', portFile: '', fallbackPort: serverPort, channelInstalled: true, conversationsDir: '' }
+        ]
+      },
+      cachedInjectScript: 'void 0;',
+      cachedPatchVersion: '1.4.2-test'
+    })
+  };
+
+  globalThis.WebSocket = MockWebSocket;
+
+  const mgr = createCdpManager({
+    bundleCtrl,
+    metricsReader: { parseConversationMetrics: () => null },
+    promptSuggester: promptSuggesterObj,
+    hasSqlite: () => false,
+    runOnce: true
+  });
+
+  try {
+    await mgr.sync();
+    assert.ok(activeMockWs, 'MockWebSocket should be attached');
+
+    const fireBinding = (reqId) => {
+      activeMockWs._emit('message', {
+        data: JSON.stringify({
+          method: 'Runtime.bindingCalled',
+          params: {
+            name: '__agRequestPromptSuggestion',
+            payload: JSON.stringify({
+              reqId,
+              fingerprint: 'fp-1',
+              conversationId: '11111111-1111-1111-1111-111111111111',
+              lastUser: 'hi',
+              lastAssistant: 'hello'
+            })
+          }
+        })
+      });
+    };
+
+    // 1. suggestWithMeta returns completed: false
+    fireBinding('req-incomplete');
+    await new Promise((r) => setTimeout(r, 20));
+    assert.deepEqual(deliveredPayloads.at(-1), {
+      reqId: 'req-incomplete',
+      payload: { ok: true, completed: false, suggestion: '' }
+    });
+
+    // 2. suggestWithMeta returns completed: true with suggestion
+    suggestImpl = { suggestWithMeta: async () => ({ completed: true, suggestion: 'Run the test suite' }) };
+    fireBinding('req-complete');
+    await new Promise((r) => setTimeout(r, 20));
+    assert.deepEqual(deliveredPayloads.at(-1), {
+      reqId: 'req-complete',
+      payload: { ok: true, completed: true, suggestion: 'Run the test suite' }
+    });
+
+    // 3. suggestWithMeta throws -> ok: false, completed: false
+    suggestImpl = {
+      suggestWithMeta: async () => {
+        throw new Error('worker crashed');
+      }
+    };
+    fireBinding('req-error');
+    await new Promise((r) => setTimeout(r, 20));
+    assert.deepEqual(deliveredPayloads.at(-1), {
+      reqId: 'req-error',
+      payload: { ok: false, completed: false, suggestion: '', error: 'worker crashed' }
+    });
+
+    // 4. Fallback to legacy suggest() when suggestWithMeta is absent -> completed: true
+    delete promptSuggesterObj.suggestWithMeta;
+    suggestImpl = { suggest: async () => 'Legacy suggestion' };
+    fireBinding('req-legacy');
+    await new Promise((r) => setTimeout(r, 20));
+    assert.deepEqual(deliveredPayloads.at(-1), {
+      reqId: 'req-legacy',
+      payload: { ok: true, completed: true, suggestion: 'Legacy suggestion' }
+    });
+
+    // 5. Guard rejection (promptSuggestions disabled) while WS open & reqId present -> immediate negative reply
+    promptSuggestionsEnabled = false;
+    fireBinding('req-guard-reject');
+    await new Promise((r) => setTimeout(r, 20));
+    assert.deepEqual(deliveredPayloads.at(-1), {
+      reqId: 'req-guard-reject',
+      payload: { ok: false, completed: false, suggestion: '' }
+    });
+  } finally {
+    mgr.closeAll();
+    globalThis.WebSocket = OrigWebSocket;
+    await new Promise((resolve) => server.close(resolve));
+  }
 });

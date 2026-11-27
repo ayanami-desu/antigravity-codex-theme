@@ -21,7 +21,7 @@ import { createCdpRelaunchController } from './cdp-relaunch.mjs';
 
 export const ALLOWED_EXTERNAL_LINKS = Object.freeze({
   github: 'https://github.com/nkjDSLcvanv/antigravity-codex-theme',
-  feedback: 'https://x.com/shehxuhxjx66088/status/2124698149742883293?a=EQtEZD2AMCGaj9bBRIo&s=20'
+  feedback: 'https://x.com/shehxuhxjx66088/status/2126138218185965569?a=GTzmV7FcYi2Wj97aJ1U&s=20'
 });
 
 export function openAllowlistedExternalLink(key, { execFileFn = execFile, platform = process.platform } = {}) {
@@ -133,6 +133,55 @@ export function isSkippedTargetCoolingDown(entry, currentOrigin, nowMs = Date.no
   if (!entry || entry.origin !== currentOrigin) return false;
   if (entry.exhausted) return true;
   return nowMs < Number(entry.nextRetryAtMs || 0);
+}
+
+export function shouldTriggerImmediateTargetDiscovery(msg, attachedTargetIds = null, options = {}) {
+  if (!msg || typeof msg !== 'object') return false;
+  const method = msg.method;
+  const hasAttached = (id) =>
+    Boolean(id && typeof attachedTargetIds?.has === 'function' && attachedTargetIds.has(id));
+
+  if (method === 'Target.targetCreated' || method === 'Target.targetInfoChanged') {
+    const info = msg.params?.targetInfo;
+    if (!info || typeof info !== 'object') return false;
+    const targetId = String(info.targetId || '');
+    if (!targetId || hasAttached(targetId)) return false;
+    const type = String(info.type || '');
+    const url = String(info.url || '');
+    const title = String(info.title || '');
+    if (type === 'iframe') {
+      return url.startsWith('plugin://swarm--');
+    }
+    if (type === 'page') {
+      if (!url || url.startsWith('devtools://') || title.includes('Launchpad')) return false;
+      if (!sharedIsAllowedOrigin(url, options?.allowedOrigins)) return false;
+      const skippedEntry = options?.skippedTargets?.get?.(targetId);
+      if (skippedEntry && isSkippedTargetCoolingDown(skippedEntry, getTargetOriginKey(url), options?.nowMs)) {
+        return false;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  if (method === 'Page.frameNavigated') {
+    const frame = msg.params?.frame;
+    if (!frame || !frame.parentId) return false;
+    const frameUrl = String(frame.url || '');
+    if (!frameUrl.startsWith('plugin://swarm--')) return false;
+    const frameId = String(frame.id || '');
+    if (frameId && hasAttached(frameId)) return false;
+    return true;
+  }
+
+  if (method === 'Page.frameAttached') {
+    if (!msg.params?.parentFrameId) return false;
+    const frameId = String(msg.params?.frameId || '');
+    if (frameId && hasAttached(frameId)) return false;
+    return true;
+  }
+
+  return false;
 }
 
 const DAEMON_EXTRA_PATTERNS = ['theme-patch', 'antigravity-font-daemon.mjs', 'antigravity-codex-daemon.mjs'];
@@ -338,9 +387,42 @@ export function createCdpManager({
   let lastTargetDiscoveryMs = 0;
   let hadAttachedTarget = false;
   let fastWatchUntilMs = 0;
+  let immediateDiscoveryTimer = null;
+  let pendingImmediateDiscovery = false;
+  let lastFrameAttachedDiscoveryMs = 0;
+  let closed = false;
   const TARGET_DISCOVERY_INTERVAL_MS = 12500;
   const FAST_WATCH_INTERVAL_MS = 650;
   const NORMAL_SYNC_INTERVAL_MS = 2500;
+  const FRAME_ATTACHED_COOLDOWN_MS = 500;
+
+  function clearImmediateDiscoveryTimer() {
+    if (immediateDiscoveryTimer) {
+      clearTimeout(immediateDiscoveryTimer);
+      immediateDiscoveryTimer = null;
+    }
+  }
+
+  function scheduleImmediateTargetDiscovery(delayMs = 60) {
+    if (runOnce || superseded || closed) return;
+    lastTargetDiscoveryMs = 0;
+    if (isSyncing) {
+      pendingImmediateDiscovery = true;
+      return;
+    }
+    if (immediateDiscoveryTimer) return;
+    const waitMs = Number.isFinite(delayMs) && delayMs >= 0 ? delayMs : 60;
+    immediateDiscoveryTimer = setTimeout(() => {
+      immediateDiscoveryTimer = null;
+      if (runOnce || superseded || closed) return;
+      if (isSyncing) {
+        pendingImmediateDiscovery = true;
+        return;
+      }
+      void sync().catch(() => {});
+    }, waitMs);
+    immediateDiscoveryTimer.unref?.();
+  }
 
   function triggerFastWatch(durationMs = 30000) {
     fastWatchUntilMs = Math.max(fastWatchUntilMs, Date.now() + durationMs);
@@ -708,6 +790,7 @@ export function createCdpManager({
             `[Daemon] Attached ${isSwarmIframe ? 'swarm iframe' : 'target'}: ${target.id} (${target.title || 'Untitled'}) [${endpoint.channel}]`
           );
           if (!isSwarmIframe) {
+            await send('Target.setDiscoverTargets', { discover: true }).catch(() => {});
             await send('Runtime.addBinding', { name: '__agRequestMetrics' });
             await send('Runtime.addBinding', { name: '__agSyncHostThemeMode' });
             await send('Runtime.addBinding', { name: '__agRequestPromptSuggestion' });
@@ -773,43 +856,71 @@ export function createCdpManager({
               return;
             }
             if (msg.method === 'Runtime.bindingCalled' && msg.params?.name === '__agRequestPromptSuggestion') {
-              const { activeConfig } = bundleCtrl.getState();
-              if (
-                isSwarmIframe ||
-                !hostConfirmed ||
-                !promptSuggester ||
-                !activeConfig.enabled ||
-                !activeConfig.modules.promptSuggestions
-              ) {
-                return;
-              }
+              if (isSwarmIframe || !hostConfirmed) return;
               let req = {};
               try {
                 req = msg.params.payload ? JSON.parse(String(msg.params.payload)) : {};
               } catch {}
               const reqId = String(req?.reqId || '');
+              const replyPromptSuggestion = async (outObj) => {
+                if (ws.readyState !== WebSocket.OPEN) return;
+                const payloadJson = JSON.stringify(outObj)
+                  .replace(/\u2028/g, '\\u2028')
+                  .replace(/\u2029/g, '\\u2029');
+                try {
+                  await send('Runtime.evaluate', {
+                    expression: `if (typeof window.__ag_on_prompt_suggestion === 'function') { window.__ag_on_prompt_suggestion(${JSON.stringify(reqId)}, ${payloadJson}); }`,
+                    returnByValue: false
+                  });
+                } catch {}
+              };
+              const { activeConfig } = bundleCtrl.getState();
+              if (!promptSuggester || !activeConfig.enabled || !activeConfig.modules.promptSuggestions) {
+                if (reqId) {
+                  void replyPromptSuggestion({ ok: false, completed: false, suggestion: '' });
+                }
+                return;
+              }
               const fingerprint = String(req?.fingerprint || '').trim();
+              const conversationId = String(req?.conversationId || '').trim().slice(0, 128);
+              const scopeId = conversationId || (target && target.id ? `target:${target.id}` : '');
               const lastUser = String(req?.lastUser || '').trim().slice(-600);
               const lastAssistant = String(req?.lastAssistant || '').trim().slice(-1400);
               void (async () => {
                 let out;
                 try {
-                  const suggestion = await promptSuggester.suggest({ fingerprint, lastUser, lastAssistant });
-                  out = { ok: true, suggestion };
-                } catch (err) {
-                  out = { ok: false, suggestion: '', error: err?.message || String(err || 'prompt suggestion failed') };
-                }
-                if (ws.readyState === WebSocket.OPEN) {
-                  const payloadJson = JSON.stringify(out)
-                    .replace(/\u2028/g, '\\u2028')
-                    .replace(/\u2029/g, '\\u2029');
-                  try {
-                    await send('Runtime.evaluate', {
-                      expression: `if (typeof window.__ag_on_prompt_suggestion === 'function') { window.__ag_on_prompt_suggestion(${JSON.stringify(reqId)}, ${payloadJson}); }`,
-                      returnByValue: false
+                  if (typeof promptSuggester.suggestWithMeta === 'function') {
+                    const res = await promptSuggester.suggestWithMeta({
+                      fingerprint,
+                      conversationId,
+                      scopeId,
+                      lastUser,
+                      lastAssistant
                     });
-                  } catch {}
+                    out = {
+                      ok: true,
+                      completed: Boolean(res?.completed),
+                      suggestion: String(res?.suggestion || '')
+                    };
+                  } else {
+                    const suggestion = await promptSuggester.suggest({
+                      fingerprint,
+                      conversationId,
+                      scopeId,
+                      lastUser,
+                      lastAssistant
+                    });
+                    out = { ok: true, completed: true, suggestion: String(suggestion || '') };
+                  }
+                } catch (err) {
+                  out = {
+                    ok: false,
+                    completed: false,
+                    suggestion: '',
+                    error: err?.message || String(err || 'prompt suggestion failed')
+                  };
                 }
+                await replyPromptSuggestion(out);
               })();
               return;
             }
@@ -875,7 +986,7 @@ export function createCdpManager({
                     if (keepLockForRestart) {
                       setTimeout(() => {
                         updateApplyInFlight = false;
-                      }, 20000).unref?.();
+                      }, 18000).unref?.();
                     } else {
                       updateApplyInFlight = false;
                     }
@@ -1053,6 +1164,26 @@ export function createCdpManager({
               return;
             }
             if (!initialAttachDone) return;
+            if (!isSwarmIframe && hostConfirmed) {
+              const { activeConfig } = bundleCtrl.getState();
+              if (
+                shouldTriggerImmediateTargetDiscovery(msg, attachedTargets, {
+                  allowedOrigins: activeConfig.allowedOrigins,
+                  skippedTargets: skippedNonHostTargets
+                })
+              ) {
+                if (msg.method === 'Page.frameAttached') {
+                  const nowMs = Date.now();
+                  if (nowMs - lastFrameAttachedDiscoveryMs >= FRAME_ATTACHED_COOLDOWN_MS) {
+                    lastFrameAttachedDiscoveryMs = nowMs;
+                    scheduleImmediateTargetDiscovery(60);
+                  }
+                } else {
+                  scheduleImmediateTargetDiscovery(60);
+                }
+                return;
+              }
+            }
             if (
               msg.method === 'Page.frameNavigated' ||
               msg.method === 'Page.loadEventFired' ||
@@ -1112,6 +1243,7 @@ export function createCdpManager({
   async function sync() {
     if (isSyncing) return;
     if (!checkLockOwnership()) return;
+    closed = false;
     isSyncing = true;
     syncTickCount = (syncTickCount + 1) % 6000;
     try {
@@ -1148,6 +1280,8 @@ export function createCdpManager({
       }
 
       lastTargetDiscoveryMs = nowMs;
+      clearImmediateDiscoveryTimer();
+      pendingImmediateDiscovery = false;
       const activeTargetIds = new Set();
       const seenRawTargetIds = new Set();
       const reachableChannels = new Set();
@@ -1276,10 +1410,18 @@ export function createCdpManager({
       }
     } finally {
       isSyncing = false;
+      if (pendingImmediateDiscovery && !runOnce && !superseded && !closed) {
+        pendingImmediateDiscovery = false;
+        lastTargetDiscoveryMs = 0;
+        scheduleImmediateTargetDiscovery(30);
+      }
     }
   }
 
   function closeAll() {
+    closed = true;
+    pendingImmediateDiscovery = false;
+    clearImmediateDiscoveryTimer();
     if (promptSuggester && typeof promptSuggester.stop === 'function') {
       promptSuggester.stop({ terminateAll: true });
     }

@@ -221,21 +221,51 @@ class FakeElement {
       .map((s) => s.trim())
       .filter(Boolean);
     for (const sel of parts) {
-      if (sel.startsWith('.')) {
-        if (this.classList.contains(sel.slice(1))) return true;
-      } else if (sel.startsWith('#')) {
-        if (this.id === sel.slice(1).replace(/\\/g, '')) return true;
-      } else if (sel.startsWith('[') && sel.endsWith(']')) {
-        const inner = sel.slice(1, -1);
-        const eq = inner.indexOf('=');
-        if (eq === -1) {
-          if (this.hasAttribute(inner)) return true;
+      let rest = sel;
+      let ok = true;
+      while (rest.length > 0) {
+        if (rest[0] === '.') {
+          const m = rest.match(/^\.([a-zA-Z0-9_-]+)/);
+          if (!m || !this.classList.contains(m[1])) {
+            ok = false;
+            break;
+          }
+          rest = rest.slice(m[0].length);
+        } else if (rest[0] === '#') {
+          const m = rest.match(/^#((?:\\.|[a-zA-Z0-9_-])+)/);
+          if (!m || this.id !== m[1].replace(/\\/g, '')) {
+            ok = false;
+            break;
+          }
+          rest = rest.slice(m[0].length);
+        } else if (rest[0] === '[') {
+          const endIdx = rest.indexOf(']');
+          if (endIdx === -1) {
+            ok = false;
+            break;
+          }
+          const inner = rest.slice(1, endIdx);
+          const eq = inner.indexOf('=');
+          if (eq === -1) {
+            if (!this.hasAttribute(inner.trim())) {
+              ok = false;
+              break;
+            }
+          } else {
+            const attrName = inner.slice(0, eq).trim();
+            const attrVal = inner.slice(eq + 1).trim().replace(/^["']|["']$/g, '');
+            if (this.getAttribute(attrName) !== attrVal) {
+              ok = false;
+              break;
+            }
+          }
+          rest = rest.slice(endIdx + 1);
         } else {
-          const attrName = inner.slice(0, eq).trim();
-          const attrVal = inner.slice(eq + 1).trim().replace(/^["']|["']$/g, '');
-          if (this.getAttribute(attrName) === attrVal) return true;
+          ok = false;
+          break;
         }
       }
+      if (ok) return true;
     }
     return false;
   }
@@ -398,6 +428,10 @@ function mountTelemetryBundle(dom, bootOverrides = {}) {
   const roInstances = [];
   let rafQueue = [];
   const requestedMetricsSigs = [];
+  const timers = new Map();
+  let nextTimerId = 1;
+  const winListeners = new Map();
+  const dispatchedWinEvents = [];
   const bootPayload = Object.assign(
     {
       version: 'test',
@@ -411,16 +445,39 @@ function mountTelemetryBundle(dom, bootOverrides = {}) {
     bootOverrides
   );
 
+  const locationObj = { pathname: '/c/' + dom.cid };
   const fakeWindow = {
     document: fakeDocument,
-    location: { pathname: '/c/' + dom.cid },
+    location: locationObj,
     navigator: { onLine: true },
     innerWidth: 1280,
     innerHeight: 800,
-    history: { pushState() {}, replaceState() {} },
+    history: {
+      pushState(_state, _title, url) {
+        if (typeof url === 'string' && url) locationObj.pathname = url.split('?')[0];
+      },
+      replaceState(_state, _title, url) {
+        if (typeof url === 'string' && url) locationObj.pathname = url.split('?')[0];
+      }
+    },
     getComputedStyle: (el) => (el && el._computedStyle) || { display: 'block', flexDirection: 'row' },
-    addEventListener() {},
-    removeEventListener() {},
+    addEventListener(type, fn) {
+      if (!winListeners.has(type)) winListeners.set(type, []);
+      winListeners.get(type).push(fn);
+    },
+    removeEventListener(type, fn) {
+      const list = winListeners.get(type);
+      if (!list) return;
+      const idx = list.indexOf(fn);
+      if (idx !== -1) list.splice(idx, 1);
+    },
+    dispatchEvent(evt) {
+      const type = typeof evt === 'string' ? evt : evt && evt.type;
+      dispatchedWinEvents.push(type);
+      const list = winListeners.get(type) || [];
+      for (const fn of list.slice()) fn(evt);
+      return true;
+    },
     requestAnimationFrame: (fn) => {
       rafQueue.push(fn);
       return rafQueue.length;
@@ -455,6 +512,11 @@ function mountTelemetryBundle(dom, bootOverrides = {}) {
     location: fakeWindow.location,
     navigator: fakeWindow.navigator,
     history: fakeWindow.history,
+    Event: class {
+      constructor(type) {
+        this.type = type;
+      }
+    },
     getComputedStyle: fakeWindow.getComputedStyle,
     requestAnimationFrame: fakeWindow.requestAnimationFrame,
     cancelAnimationFrame: fakeWindow.cancelAnimationFrame,
@@ -463,15 +525,22 @@ function mountTelemetryBundle(dom, bootOverrides = {}) {
       observe() {}
       disconnect() {}
     },
-    setTimeout: () => 1,
-    clearTimeout: () => {},
+    setTimeout: (fn, delay = 0) => {
+      const id = nextTimerId++;
+      timers.set(id, { fn, delay });
+      return id;
+    },
+    clearTimeout: (id) => {
+      timers.delete(id);
+    },
     setInterval: () => 1,
     clearInterval: () => {},
     console
   };
 
   const code = parts.map((p) => fs.readFileSync(path.join(runtimeDir, p), 'utf8')).join('\n');
-  vm.runInNewContext(code, sandbox);
+  const ctx = vm.createContext(sandbox);
+  vm.runInContext(code, ctx);
 
   const flushRaf = () => {
     const q = rafQueue.slice();
@@ -479,11 +548,28 @@ function mountTelemetryBundle(dom, bootOverrides = {}) {
     for (const fn of q) fn();
   };
 
+  const flushTimers = () => {
+    const entries = Array.from(timers.entries());
+    timers.clear();
+    for (const [, entry] of entries) entry.fn();
+  };
+
+  const reInject = (nextBootOverrides = {}) => {
+    const nextBoot = Object.assign({}, bootPayload, nextBootOverrides);
+    sandbox.__AG_BOOT_PAYLOAD__ = nextBoot;
+    fakeWindow.__ag_boot = nextBoot;
+    vm.runInContext(code, ctx);
+  };
+
   return {
     win: fakeWindow,
     doc: fakeDocument,
     roInstances,
     requestedMetricsSigs,
+    dispatchedWinEvents,
+    timers,
+    flushTimers,
+    reInject,
     triggerResize: () => {
       if (roCallback) roCallback();
       flushRaf();
@@ -791,4 +877,109 @@ test('Split-screen conversations mount independent telemetry pills, watch both c
   assert.equal(draftPill.id, 'ag-live-metrics-pill-1');
   assert.ok(draftPill.querySelector('.ag-live-metrics-text').innerHTML.includes('就绪'));
   assert.equal(pillB.querySelector('.ag-live-metrics-text').getAttribute('data-ag-raw-html'), htmlB);
+});
+
+test('Global-B & 16-D: cleanup sets disposed & clears __ag_on_route_change so route switch after disable never resurrects telemetry, while pushState dispatches ag-route-change', () => {
+  const dom = buildComposerDom({ withExplicitFooter: true });
+  const env = mountTelemetryBundle(dom, { telemetryLayout: 'compact' });
+
+  // Active state: pill mounted and __ag_on_route_change is active
+  const pillBefore = env.doc.getElementById('ag-live-metrics-pill');
+  assert.ok(pillBefore, 'pill should be mounted while enabled');
+  assert.equal(typeof env.win.__ag_on_route_change, 'function');
+  const staleRouteFn = env.win.__ag_on_route_change;
+  const hookedPush = env.win.history.pushState;
+
+  // SPA pushState dispatches ag-route-change synchronously and schedules metrics sync
+  const cid2 = '33333333-3333-4333-8333-333333333333';
+  env.win.history.pushState({}, '', '/c/' + cid2);
+  assert.ok(env.dispatchedWinEvents.includes('ag-route-change'), 'pushState must dispatch ag-route-change event');
+  env.flushTimers();
+
+  // Hot-reload while enabled must NOT double-wrap history.pushState
+  env.reInject({ version: 'test-v2', enabled: true });
+  assert.equal(env.win.history.pushState, hookedPush, 're-injection must not double-wrap history.pushState');
+
+  // Now disable plugin (enabled: false) -> runs cleanup, removes pill, clears __ag_on_route_change
+  const sigCountBeforeDisable = env.requestedMetricsSigs.length;
+  env.reInject({ version: 'test-v3', enabled: false });
+  assert.equal(env.win.__ag_on_route_change, null, 'cleanup must clear window.__ag_on_route_change');
+  assert.equal(env.doc.getElementById('ag-live-metrics-pill'), null, 'pill must be removed when disabled');
+
+  // Route switch via pushState AND direct invocation of stale callback MUST NOT resurrect telemetry!
+  const cid3 = '44444444-4444-4444-8444-444444444444';
+  env.win.history.pushState({}, '', '/c/' + cid3);
+  env.flushTimers();
+  staleRouteFn();
+  env.triggerResize();
+
+  assert.equal(env.doc.getElementById('ag-live-metrics-pill'), null, 'route change after disable must never resurrect telemetry pill');
+  assert.equal(
+    env.requestedMetricsSigs.length,
+    sigCountBeforeDisable,
+    'route change after disable must never trigger __agRequestMetrics'
+  );
+});
+
+test('16-F: subagent-tab-composer is isolated as a dedicated subagent pane instead of misclassifying into mainEntries', () => {
+  const body = new FakeElement('BODY');
+  body._isRoot = true;
+  const mainCid = '55555555-5555-4555-8555-555555555555';
+  const subCid = '66666666-6666-4666-8666-666666666666';
+  const subCid2 = '77777777-7777-4777-8777-777777777777';
+
+  // Main conversation has NO data-cascade-id on DOM -> relies on route fallback (allowGlobalFallback = mainEntries.length === 1)
+  const mainPane = createConversationPane({ cid: '', modelLabel: 'Gemini 4 Neon High' });
+  body.appendChild(mainPane.convView);
+
+  // Antigravity 2.35.2 subagent tab structure: [data-media-drop-scope="subpane"] with sibling conversation + composer
+  const subpane = new FakeElement('DIV', { attrs: { 'data-media-drop-scope': 'subpane' } });
+  const subConv = new FakeElement('DIV', {
+    attrs: { 'data-testid': 'subagent-tab-conversation', 'data-cascade-id': subCid }
+  });
+  subpane.appendChild(subConv);
+
+  const subComposer = new FakeElement('DIV', {
+    attrs: { 'data-testid': 'subagent-tab-composer', 'data-side-panel-composer': '' }
+  });
+  const subBoxBundle = createConversationPane({ cid: '', modelLabel: 'Gemini 3.8 Flash Low' });
+  subComposer.appendChild(subBoxBundle.inputBox);
+  subpane.appendChild(subComposer);
+  body.appendChild(subpane);
+
+  const env = mountTelemetryBundle({ body, cid: mainCid }, { telemetryLayout: 'compact' });
+  env.win.__ag_on_route_change();
+
+  // Both mainCid (via route fallback!) and subCid (via subagent-tab-conversation) must be watched
+  assert.deepEqual(Array.from(env.win.__ag_get_watched_cascade_ids()), [mainCid, subCid]);
+
+  // Main pane keeps pillId 'ag-live-metrics-pill' / key 'main'; subagent gets dedicated 'ag-subagent-metrics-pill' / key 'subagent'
+  const mainPill = mainPane.inputBox.querySelector('.ag-live-metrics-pill');
+  const subPill = subBoxBundle.inputBox.querySelector('.ag-live-metrics-pill');
+  assert.ok(mainPill, 'main pane should mount its telemetry pill');
+  assert.ok(subPill, 'subagent pane should mount its telemetry pill');
+  assert.equal(mainPill.id, 'ag-live-metrics-pill');
+  assert.equal(mainPill.getAttribute('data-ag-pane'), 'main');
+  assert.equal(subPill.id, 'ag-subagent-metrics-pill');
+  assert.equal(subPill.getAttribute('data-ag-pane'), 'subagent');
+
+  // Mount turn badges on both active panes, then switch ONLY the subagent tab's cascadeId
+  const mainTurnBadge = new FakeElement('SPAN', { className: 'ag-turn-metrics' });
+  const subTurnBadge = new FakeElement('SPAN', { className: 'ag-turn-metrics' });
+  mainPane.convView.appendChild(mainTurnBadge);
+  subConv.appendChild(subTurnBadge);
+
+  // Switching subagent cascadeId wipes turn badges ONLY inside subpane, NEVER inside main conversation!
+  subConv.setAttribute('data-cascade-id', subCid2);
+  env.win.__ag_on_route_change();
+  assert.equal(subConv.querySelector('.ag-turn-metrics'), null, 'subagent switch should clear subpane turn badges');
+  assert.equal(mainPane.convView.querySelector('.ag-turn-metrics'), mainTurnBadge, 'subagent switch must never clear main conversation turn badges');
+  assert.deepEqual(Array.from(env.win.__ag_get_watched_cascade_ids()), [mainCid, subCid2]);
+
+  // Removing subagent pane cleans up subagent state & ResizeObserver without disturbing main pane
+  subpane.remove();
+  env.win.__ag_on_route_change();
+  assert.equal(env.win.__ag_pane_states['subagent'], undefined);
+  assert.equal(body.querySelectorAll('.ag-live-metrics-pill').length, 1);
+  assert.equal(env.doc.getElementById('ag-live-metrics-pill'), mainPill);
 });

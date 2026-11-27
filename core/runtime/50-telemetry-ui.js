@@ -4,7 +4,7 @@
  */
   // Remove any stale DOM nodes and observers from a prior bundle version so fresh listeners attach cleanly
   try {
-    for (const staleId of ['ag-live-metrics-pill', 'ag-side-metrics-pill', 'ag-live-metrics-tooltip', 'ag-turn-metrics-tooltip']) {
+    for (const staleId of ['ag-live-metrics-pill', 'ag-side-metrics-pill', 'ag-subagent-metrics-pill', 'ag-live-metrics-tooltip', 'ag-turn-metrics-tooltip']) {
       const staleEl = document.getElementById(staleId);
       if (staleEl) staleEl.remove();
     }
@@ -28,6 +28,8 @@
     }
   } catch (e) {}
 
+  let disposed = false;
+  let popStateTimer = null;
   const AG_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const metricsByCid = (window.__ag_metrics_by_cid = {});
   const paneStates = (window.__ag_pane_states = {});
@@ -69,14 +71,14 @@
     try {
       const pathStr = String(window.location && window.location.pathname ? window.location.pathname : '');
       const mRoute = pathStr.match(/\/c\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-zA-Z_-]{8,})/i);
-      if (mRoute && mRoute[1]) return mRoute[1];
+      if (mRoute && mRoute[1] && !/^conversation$/i.test(mRoute[1])) return mRoute[1];
       const mainView = document.querySelector('[data-testid="conversation-view"][data-cascade-id]');
       const viewCid = mainView ? String(mainView.getAttribute('data-cascade-id') || '').trim() : '';
       if (AG_UUID_RE.test(viewCid)) return viewCid;
       if (!document.querySelector('[data-testid="home-greeting"], [data-testid="home-splash-content"]')) {
         const selRow = document.querySelector('[data-testid="conversation-row-sidebar"][data-selected="true"]');
-        const selCid = selRow ? selRow.getAttribute('data-cascade-id') || '' : '';
-        if (selCid) return selCid;
+        const selCid = selRow ? String(selRow.getAttribute('data-cascade-id') || '').trim() : '';
+        if (selCid && !/^conversation$/i.test(selCid)) return selCid;
       }
     } catch (e) {}
     return '';
@@ -134,7 +136,10 @@
       const cidHolder = box && box.closest ? box.closest('[data-cascade-id]') : null;
       if (
         cidHolder &&
-        (!cidHolder.closest || !cidHolder.closest('[data-testid="side-question-tab-content"]'))
+        (!cidHolder.closest ||
+          (!cidHolder.closest('[data-testid="side-question-tab-content"]') &&
+            !cidHolder.closest('[data-testid="subagent-tab-composer"]') &&
+            !cidHolder.closest('[data-media-drop-scope="subpane"]')))
       ) {
         const holderCid = String(cidHolder.getAttribute('data-cascade-id') || '').trim();
         if (AG_UUID_RE.test(holderCid)) return holderCid;
@@ -159,22 +164,50 @@
     return '';
   }
 
+  function extractSubagentCascadeId(subpane, box) {
+    try {
+      if (subpane) {
+        const convEl = subpane.querySelector('[data-testid="subagent-tab-conversation"]');
+        const attrCid = convEl ? String(convEl.getAttribute('data-cascade-id') || '').trim() : '';
+        if (AG_UUID_RE.test(attrCid)) return attrCid;
+        const selfCid = String(subpane.getAttribute('data-cascade-id') || '').trim();
+        if (AG_UUID_RE.test(selfCid)) return selfCid;
+      }
+      const holder = box && box.closest ? box.closest('[data-cascade-id]') : null;
+      if (holder && (!subpane || subpane.contains(holder))) {
+        const holderCid = String(holder.getAttribute('data-cascade-id') || '').trim();
+        if (AG_UUID_RE.test(holderCid)) return holderCid;
+      }
+    } catch (e) {}
+    return '';
+  }
+
   function discoverConversationPanes() {
     const panes = [];
     try {
       const boxes = document.querySelectorAll('[id="' + SELECTORS.inputBoxId + '"]');
       const mainEntries = [];
       const sideEntries = [];
+      const subagentEntries = [];
       for (let i = 0; i < boxes.length; i++) {
         const box = boxes[i];
         const sideContent = box.closest ? box.closest('[data-testid="side-question-tab-content"]') : null;
         const inSide = Boolean(
           sideContent || (box.closest && box.closest('[data-testid="side-question-tab-composer"]'))
         );
+        const subagentComposer = !inSide && box.closest ? box.closest('[data-testid="subagent-tab-composer"]') : null;
         if (inSide) {
           const container = sideContent || box.parentElement || document;
           if (isPaneElementHidden(box) || (sideContent && isPaneElementHidden(sideContent))) continue;
           sideEntries.push({ box, sideContent, container });
+        } else if (subagentComposer) {
+          const subpane =
+            (subagentComposer.closest ? subagentComposer.closest('[data-media-drop-scope="subpane"]') : null) ||
+            subagentComposer.parentElement ||
+            null;
+          const container = subpane || subagentComposer;
+          if (isPaneElementHidden(box) || (subpane && isPaneElementHidden(subpane))) continue;
+          subagentEntries.push({ box, subpane, container });
         } else {
           const convView = box.closest ? box.closest('[data-testid="conversation-view"]') : null;
           if (isPaneElementHidden(box) || (convView && isPaneElementHidden(convView))) continue;
@@ -200,6 +233,16 @@
           inputBox: box,
           container,
           cid: extractSideCascadeId(sideContent, box)
+        });
+      }
+      for (let i = 0; i < subagentEntries.length; i++) {
+        const { box, subpane, container } = subagentEntries[i];
+        panes.push({
+          key: i === 0 ? 'subagent' : 'subagent-' + i,
+          pillId: i === 0 ? 'ag-subagent-metrics-pill' : 'ag-subagent-metrics-pill-' + i,
+          inputBox: box,
+          container,
+          cid: extractSubagentCascadeId(subpane, box)
         });
       }
     } catch (e) {}
@@ -237,6 +280,12 @@
       document.querySelectorAll('[data-testid="side-question-tab-content"]').forEach((sc) => {
         if (isPaneElementHidden(sc)) return;
         add(extractSideCascadeId(sc));
+      });
+    } catch (e) {}
+    try {
+      document.querySelectorAll('[data-testid="subagent-tab-conversation"]').forEach((sc) => {
+        if (isPaneElementHidden(sc)) return;
+        add(sc.getAttribute('data-cascade-id'));
       });
     } catch (e) {}
     return out;
@@ -347,7 +396,13 @@
         const ownerPane = getPaneByKey(ownerKey);
         const pill = ownerPane
           ? document.getElementById(ownerPane.pillId)
-          : document.getElementById(ownerKey === 'side' ? 'ag-side-metrics-pill' : 'ag-live-metrics-pill');
+          : document.getElementById(
+              ownerKey === 'side'
+                ? 'ag-side-metrics-pill'
+                : ownerKey === 'subagent'
+                ? 'ag-subagent-metrics-pill'
+                : 'ag-live-metrics-pill'
+            );
         if (pill) positionMetricsTooltip(pill, tt, ownerPane ? ownerPane.inputBox : null);
       });
     }
@@ -383,7 +438,9 @@
 
   function isMetricsPillEl(el) {
     if (!el || el.nodeType !== 1) return false;
-    if (el.id === 'ag-live-metrics-pill' || el.id === 'ag-side-metrics-pill') return true;
+    if (el.id === 'ag-live-metrics-pill' || el.id === 'ag-side-metrics-pill' || el.id === 'ag-subagent-metrics-pill') {
+      return true;
+    }
     return Boolean(el.classList && el.classList.contains('ag-live-metrics-pill'));
   }
 
@@ -676,9 +733,11 @@
       }
       ps.roObserved = inputBox;
       ps.ro = new ResizeObserver(() => {
+        if (disposed || !ENABLED || !MODULES.metrics) return;
         if (ps.roRaf) return;
         const runLayout = () => {
           ps.roRaf = 0;
+          if (disposed || !ENABLED || !MODULES.metrics) return;
           const curPane = getPaneByKey(paneKey);
           if (!curPane) return;
           ensureMetricsPillForPane(curPane, false, false);
@@ -712,7 +771,7 @@
     try {
       const claimedBoxes = new Set();
       const keptPills = [];
-      const allPills = document.querySelectorAll('.ag-live-metrics-pill, #ag-live-metrics-pill, #ag-side-metrics-pill');
+      const allPills = document.querySelectorAll('.ag-live-metrics-pill, #ag-live-metrics-pill, #ag-side-metrics-pill, #ag-subagent-metrics-pill');
       for (let i = 0; i < allPills.length; i++) {
         const el = allPills[i];
         const ownerBox = el.closest ? el.closest('[id="' + SELECTORS.inputBoxId + '"]') : null;
@@ -752,6 +811,7 @@
     const staleKeys = new Set(Object.keys(paneStates));
     staleKeys.add('main');
     staleKeys.add('side');
+    staleKeys.add('subagent');
     for (const k of staleKeys) {
       if (activeKeys.has(k)) continue;
       const ps = paneStates[k];
@@ -955,7 +1015,7 @@
   }
 
   function applyPendingWaitVisuals() {
-    if (!MODULES.metrics) return null;
+    if (disposed || !ENABLED || !MODULES.metrics) return null;
     const now = Date.now();
     const panes = discoverConversationPanes();
     pruneStalePills(panes);
@@ -1327,13 +1387,15 @@
   }
 
   function ensureTurnMetricsObserver() {
-    if (!MODULES.metrics || !document.body || typeof MutationObserver === 'undefined') return;
+    if (disposed || !ENABLED || !MODULES.metrics || !document.body || typeof MutationObserver === 'undefined') return;
     if (window.__ag_turn_metrics_observer) return;
     const scheduleSync = (withPaneCheck) => {
+      if (disposed || !ENABLED || !MODULES.metrics) return;
       if (withPaneCheck) window.__ag_turn_sync_needs_pane = true;
       if (window.__ag_turn_sync_raf) return;
       window.__ag_turn_sync_raf = requestAnimationFrame(() => {
         window.__ag_turn_sync_raf = null;
+        if (disposed || !ENABLED || !MODULES.metrics) return;
         const needPane = Boolean(window.__ag_turn_sync_needs_pane);
         window.__ag_turn_sync_needs_pane = false;
         if (needPane) {
@@ -1344,6 +1406,7 @@
       });
     };
     window.__ag_turn_metrics_observer = new MutationObserver((mutations) => {
+      if (disposed || !ENABLED || !MODULES.metrics) return;
       let hitToolbar = false;
       let hitPane = false;
       for (let i = 0; i < mutations.length; i++) {
@@ -1361,15 +1424,19 @@
             const n = nodes[j];
             if (n.nodeType !== 1) continue;
             const tid = n.getAttribute ? n.getAttribute('data-testid') || '' : '';
+            const dropScope = n.getAttribute ? n.getAttribute('data-media-drop-scope') || '' : '';
             if (
               n.id === SELECTORS.inputBoxId ||
               tid === 'conversation-view' ||
               tid === 'side-question-tab-content' ||
               tid === 'side-question-tab-composer' ||
               tid === 'side-question-tab-conversation' ||
+              tid === 'subagent-tab-composer' ||
+              tid === 'subagent-tab-conversation' ||
+              dropScope === 'subpane' ||
               (n.querySelector &&
                 n.querySelector(
-                  '[data-testid="conversation-view"], [data-testid="side-question-tab-content"], [id="' + SELECTORS.inputBoxId + '"]'
+                  '[data-testid="conversation-view"], [data-testid="side-question-tab-content"], [data-testid="subagent-tab-composer"], [data-testid="subagent-tab-conversation"], [id="' + SELECTORS.inputBoxId + '"]'
                 ))
             ) {
               hitPane = true;
@@ -1403,7 +1470,8 @@
     } catch (e) {}
   }
 
-  window.__ag_render_metrics = function (payload) {
+  const renderMetricsHandler = function (payload) {
+    if (disposed || !ENABLED) return;
     window.__ag_last_daemon_hb = Date.now();
     if (!payload || typeof payload !== 'object') return;
     const payloadCid = String(payload.cid || payload.cascadeId || '').trim();
@@ -1450,9 +1518,10 @@
     renderTurnMetrics();
     applyPendingWaitVisuals();
   };
+  window.__ag_render_metrics = renderMetricsHandler;
 
   function checkRouteAndMountMetrics() {
-    if (!MODULES.metrics) return;
+    if (disposed || !ENABLED || !MODULES.metrics) return;
     const mainCid = extractCascadeId();
     const panes = discoverConversationPanes();
     pruneStalePills(panes);
@@ -1525,30 +1594,58 @@
 
   window.__ag_on_route_change = checkRouteAndMountMetrics;
 
-  if (!window.__ag_history_hooked) {
+  if (!window.__ag_route_hooked && typeof history !== 'undefined' && history) {
+    const alreadyHadLegacyHook = Boolean(window.__ag_history_hooked);
+    window.__ag_route_hooked = true;
     window.__ag_history_hooked = true;
-    const origPush = history.pushState;
-    const origReplace = history.replaceState;
-    history.pushState = function () {
-      const res = origPush.apply(this, arguments);
-      setTimeout(() => window.__ag_on_route_change && window.__ag_on_route_change(), 40);
-      return res;
+    const origPush = typeof history.pushState === 'function' ? history.pushState : null;
+    const origReplace = typeof history.replaceState === 'function' ? history.replaceState : null;
+    const notifyRoute = () => {
+      try {
+        if (typeof window.dispatchEvent === 'function') {
+          const ev = typeof Event === 'function' ? new Event('ag-route-change') : { type: 'ag-route-change' };
+          window.dispatchEvent(ev);
+        }
+      } catch (e) {}
+      if (!alreadyHadLegacyHook) {
+        setTimeout(() => window.__ag_on_route_change && window.__ag_on_route_change(), 40);
+      }
     };
-    history.replaceState = function () {
-      const res = origReplace.apply(this, arguments);
-      setTimeout(() => window.__ag_on_route_change && window.__ag_on_route_change(), 40);
-      return res;
-    };
+    if (origPush) {
+      history.pushState = function () {
+        const res = origPush.apply(this, arguments);
+        notifyRoute();
+        return res;
+      };
+    }
+    if (origReplace) {
+      history.replaceState = function () {
+        const res = origReplace.apply(this, arguments);
+        notifyRoute();
+        return res;
+      };
+    }
   }
 
-  const _onPopState = () => setTimeout(() => checkRouteAndMountMetrics(), 40);
+  const _onPopState = () => {
+    if (disposed || !ENABLED) return;
+    if (popStateTimer) clearTimeout(popStateTimer);
+    popStateTimer = setTimeout(() => {
+      popStateTimer = null;
+      if (!disposed) checkRouteAndMountMetrics();
+    }, 40);
+  };
   const _onVisibility = () => {
+    if (disposed || !ENABLED) return;
     if (!document.hidden) {
       window.__ag_visible_since = Date.now();
       applyPendingWaitVisuals();
     }
   };
-  const _onNetworkChange = () => applyPendingWaitVisuals();
+  const _onNetworkChange = () => {
+    if (disposed || !ENABLED) return;
+    applyPendingWaitVisuals();
+  };
   const _closeMetricsTooltip = () => {
     window.__ag_tt_pinned = false;
     window.__ag_tt_hover_opened_at = 0;
@@ -1620,10 +1717,10 @@
   if (MODULES.metrics) {
     if (!window.__ag_visible_since) window.__ag_visible_since = Date.now();
     window.__ag_metrics_route_watcher = setInterval(() => {
-      if (!document.hidden) checkRouteAndMountMetrics();
+      if (!disposed && !document.hidden) checkRouteAndMountMetrics();
     }, 2000);
     window.__ag_live_probe_timer = setInterval(() => {
-      if (!document.hidden) applyPendingWaitVisuals();
+      if (!disposed && !document.hidden) applyPendingWaitVisuals();
     }, 1000);
   } else {
     try {
@@ -1646,6 +1743,27 @@
   }
 
   window.__ag_cleanup_fns.push(() => {
+    disposed = true;
+    window.__ag_on_route_change = null;
+    if (window.__ag_refresh_wait_ui === applyPendingWaitVisuals) {
+      window.__ag_refresh_wait_ui = null;
+    }
+    if (window.__ag_render_metrics === renderMetricsHandler) {
+      window.__ag_render_metrics = null;
+    }
+    if (window.__ag_get_watched_cascade_ids === getWatchedCascadeIds) {
+      window.__ag_get_watched_cascade_ids = null;
+    }
+    if (popStateTimer) {
+      clearTimeout(popStateTimer);
+      popStateTimer = null;
+    }
+    if (window.__ag_turn_sync_raf) {
+      if (typeof cancelAnimationFrame === 'function') {
+        try { cancelAnimationFrame(window.__ag_turn_sync_raf); } catch (e) {}
+      }
+      window.__ag_turn_sync_raf = null;
+    }
     window.removeEventListener('popstate', _onPopState);
     document.removeEventListener('visibilitychange', _onVisibility);
     window.removeEventListener('online', _onNetworkChange);

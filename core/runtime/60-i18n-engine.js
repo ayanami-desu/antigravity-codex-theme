@@ -25,6 +25,7 @@
   window.__ag_i18n_dict = DICT;
 
   let scanBodyFn = null;
+  let i18nInitialScanDone = false;
   const I18N_OBS_OPTS = {
     childList: true,
     subtree: true,
@@ -210,14 +211,12 @@
       'edited file and artifacts': '已编辑文件与交付工件',
       'edited files and artifacts': '已编辑文件与交付工件'
     };
-    const RE_EPHEMERAL_COUNT_CLAUSE = /^(explored|edited|ran)\s+(\d+)\s+(files?|artifacts?|commands?)$/i;
-    function translateEphemeralClause(clause) {
-      const low = clause.trim().toLowerCase();
-      if (EPHEMERAL_CLAUSE_MAP[low]) return EPHEMERAL_CLAUSE_MAP[low];
-      const mCount = low.match(RE_EPHEMERAL_COUNT_CLAUSE);
-      if (mCount) {
-        const vMap = { explored: '已探索', edited: '已编辑', ran: '已运行' };
-        const nMap = {
+    const RE_EPHEMERAL_DUAL_OR_COUNT_CLAUSE =
+      /^(explored|edited|ran)\s+(?:(\d+)\s+)?(files?|artifacts?|commands?)(?:\s+and\s+(?:(\d+)\s+)?(files?|artifacts?|commands?))?$/i;
+    function formatEphemeralObjectZh(count, noun) {
+      const lowNoun = noun.toLowerCase();
+      if (count) {
+        const countedMap = {
           file: '个文件',
           files: '个文件',
           artifact: '个交付工件',
@@ -225,7 +224,32 @@
           command: '条命令',
           commands: '条命令'
         };
-        return vMap[mCount[1]] + ' ' + mCount[2] + ' ' + nMap[mCount[3]];
+        return count + ' ' + (countedMap[lowNoun] || noun);
+      }
+      const bareMap = {
+        file: '文件',
+        files: '文件',
+        artifact: '交付工件',
+        artifacts: '交付工件',
+        command: '命令',
+        commands: '命令'
+      };
+      return bareMap[lowNoun] || noun;
+    }
+    function translateEphemeralClause(clause) {
+      const low = clause.trim().toLowerCase();
+      if (EPHEMERAL_CLAUSE_MAP[low]) return EPHEMERAL_CLAUSE_MAP[low];
+      const mCount = low.match(RE_EPHEMERAL_DUAL_OR_COUNT_CLAUSE);
+      if (mCount) {
+        const vMap = { explored: '已探索', edited: '已编辑', ran: '已运行' };
+        const verb = vMap[mCount[1]] || mCount[1];
+        const firstObj = formatEphemeralObjectZh(mCount[2], mCount[3]);
+        const head = mCount[2] ? verb + ' ' + firstObj : verb + firstObj;
+        if (!mCount[5]) {
+          return head;
+        }
+        const secondObj = formatEphemeralObjectZh(mCount[4], mCount[5]);
+        return head + (mCount[4] ? '和 ' : '与') + secondObj;
       }
       return clause.trim();
     }
@@ -246,6 +270,26 @@
       'file and artifacts': '文件与交付工件',
       'files and artifacts': '文件与交付工件'
     };
+    const RE_EPHEMERAL_PATH_OR_CODE = /[\/\\_`"'~*@#<>[\]{}=+$]|\.\w|\.\*/;
+    const RE_EPHEMERAL_SINGLE_IDENT = /^(?:[A-Z0-9_]{2,}|[a-z]+[A-Z][a-zA-Z0-9]*|[a-z0-9]+[-_][a-z0-9_-]+)$/;
+    function isEphemeralCodeOrPathTarget(obj) {
+      if (!obj) return false;
+      if (RE_EPHEMERAL_PATH_OR_CODE.test(obj)) return true;
+      if (!/\s/.test(obj) && RE_EPHEMERAL_SINGLE_IDENT.test(obj)) return true;
+      return false;
+    }
+    function translateEphemeralActive(trimmed, contextEl) {
+      if (isInHeaderOrBreadcrumb(contextEl)) return null;
+      const mActive = trimmed.match(RE_EPHEMERAL_ACTIVE);
+      if (!mActive) return null;
+      const obj = mActive[2].trim();
+      const noun = EPHEMERAL_NOUN_MAP[obj.toLowerCase()];
+      if (noun) return EPHEMERAL_VERB_MAP[mActive[1]] + noun;
+      if (isEphemeralCodeOrPathTarget(obj)) {
+        return EPHEMERAL_VERB_MAP[mActive[1]] + ' ' + obj;
+      }
+      return null;
+    }
     const RE_RUNNING_CMD = /^Running\s+(?!commands?\b|processes\b|for\b|\(Dev\b)(.+)$/;
     const RE_DELETED_RECORDINGS = /^Deleted\s+(\d+)\s+recordings?\s*\(([\d.]+\s*MB)\)$/i;
     const RE_DELETE_RECORDINGS_CONFIRM =
@@ -270,8 +314,23 @@
       return !m || /^this model$/i.test(m) ? '该模型' : m;
     }
 
+    function formatQuotaUpgradeZh(mUp) {
+      const higherPrefix = mUp[1] ? '更高的 ' : ' ';
+      const limitDesc = mUp[3].toLowerCase() === 'the highest' ? '最高速率配额' : '更高的配额速率限制';
+      return '您可以升级到' + higherPrefix + 'Google AI ' + mUp[2] + ' 方案以获得' + limitDesc + '。';
+    }
+
     function translateQuotaExhaustedZh(trimmed) {
-      if (!trimmed || (!trimmed.includes('quota') && !trimmed.includes('AI Credit'))) return null;
+      if (
+        !trimmed ||
+        (!trimmed.includes('quota') && !trimmed.includes('AI Credit') && !trimmed.includes('Google AI '))
+      ) {
+        return null;
+      }
+      const mUpStandalone = trimmed.match(RE_QUOTA_UPGRADE_PLAN);
+      if (mUpStandalone) {
+        return formatQuotaUpgradeZh(mUpStandalone);
+      }
       const mReset = trimmed.match(RE_QUOTA_RESET_SWITCH);
       if (mReset) {
         const mod = formatQuotaModelZh(mReset[1]);
@@ -319,9 +378,7 @@
         } else {
           const mUp = rest.match(RE_QUOTA_UPGRADE_PLAN);
           if (mUp) {
-            const higherPrefix = mUp[1] ? '更高的 ' : '';
-            const limitDesc = mUp[3].toLowerCase() === 'the highest' ? '最高速率配额' : '更高的配额速率限制';
-            parts.push('您可以升级到' + higherPrefix + 'Google AI ' + mUp[2] + ' 方案以获得' + limitDesc + '。');
+            parts.push(formatQuotaUpgradeZh(mUp));
           } else {
             parts.push(rest);
           }
@@ -329,6 +386,23 @@
       }
       return parts.join('');
     }
+    const RE_SWARM_FROM = /^From\s+(@?[a-zA-Z0-9][a-zA-Z0-9._-]{0,31})$/;
+    const RE_SWARM_TO = /^To\s+(@?[a-zA-Z0-9][a-zA-Z0-9._-]{0,31})$/;
+    const RE_SWARM_OF_TASKS_DONE = /^(\d+)\s+of\s+(\d+)\s+tasks?\s+done$/i;
+    const RE_SWARM_OF_DONE = /^(\d+)\s+of\s+(\d+)\s+done$/i;
+    const RE_SWARM_THREADS_OPEN = /^(\d+)\s+threads?\s+open$/i;
+    const RE_SWARM_WAITING_ON = /^Waiting on\s+(@[a-zA-Z0-9][a-zA-Z0-9._-]{0,31})$/i;
+    const RE_SWARM_WORKING_FOR = /^Working for\s+(@[a-zA-Z0-9][a-zA-Z0-9._-]{0,31})$/i;
+    const RE_SWARM_UP_NEXT = /^Up next\s*·\s*(.+)$/i;
+    const RE_SWARM_EXPORTING_PCT = /^Exporting\s+(\d+(?:\.\d+)?)%$/i;
+    const RE_SWARM_RENDERING_FILE = /^Rendering\s+([^\r\n/\\]+\.[a-z0-9]{1,10})(?:…|\.\.\.)$/i;
+    const RE_SWARM_DOWNLOAD_FILE = /^Download\s+([^\r\n/\\]+\.[a-z0-9]{1,10})$/i;
+    const RE_SWARM_SHOW_EARLIER_POSTS = /^Show\s+(\d+)\s+earlier\s+posts?\s*\((\d+)\s+older\)$/i;
+    const RE_SWARM_LOADING_EARLIER_POSTS = /^Loading earlier posts(?:…|\.\.\.)\s*\((\d+)\s+older\)$/i;
+    const RE_SWARM_OPEN_HANDLE = /^Open\s+(@[a-zA-Z0-9][a-zA-Z0-9._-]{0,31})$/i;
+    const RE_SWARM_GOTO_SEQ = /^Go to #(\d+) on the Board$/i;
+    const RE_SUFFIX_DEFAULT = / \(default\)$/i;
+    const RE_SUFFIX_EXPERIMENTAL = / \(experimental\)$/i;
     const RE_ARIA_BRANCH = /^Branch, current:\s*(.*)$/i;
     const RE_ARIA_PROJECT = /^Select project(?:, current)?:\s*(.*)$/i;
     const RE_ARIA_LOCATION = /^(?:Where the agent runs, current|Select location(?:, current)?):\s*(.*)$/i;
@@ -401,20 +475,37 @@
       return !!(el && el.closest && el.closest('header, [data-testid="breadcrumb-segment"]'));
     }
 
-    function resolveContextualDictTranslation(trimmed, contextEl, baseVal) {
+    const BUILTIN_PROJECT_HEADER_LABELS = new Set(['Standalone', 'Archived']);
+    const BUILTIN_BREADCRUMB_LABELS = new Set(['Standalone', 'Archived', 'New Conversation', 'New conversation']);
+
+    function resolveContextualDictTranslation(trimmed, contextEl, baseVal, isAttr) {
       if (!contextEl || !contextEl.closest) return baseVal;
-      if (baseVal !== undefined && !/\s/.test(trimmed)) {
+      const isTruncatedTooltipMirror =
+        Boolean(isAttr) &&
+        typeof contextEl.textContent === 'string' &&
+        contextEl.textContent.trim() === trimmed;
+      if (!isAttr || isTruncatedTooltipMirror) {
         if (
-          contextEl.closest(
-            '[data-testid="branch-pill-trigger"], [data-testid="project-branch-picker"], [data-testid="project-selector-trigger"], [data-testid="workspace-name"], [data-testid="sidebar-project-title"], a[data-testid="breadcrumb-segment"][href*="project="]'
-          )
+          !BUILTIN_PROJECT_HEADER_LABELS.has(trimmed) &&
+          contextEl.closest('[data-testid="project-header"]:not([data-project-icon="archived"])')
         ) {
           return null;
         }
+        if (contextEl.closest('[data-testid="conversation-group-header"]')) {
+          return null;
+        }
         if (
-          trimmed !== 'Standalone' &&
-          trimmed !== 'Archived' &&
-          contextEl.closest('[data-testid="project-header"]:not([data-project-icon="archived"])')
+          !BUILTIN_BREADCRUMB_LABELS.has(trimmed) &&
+          contextEl.closest('a[data-testid="breadcrumb-segment"][href*="project="], span[data-testid="breadcrumb-segment"]')
+        ) {
+          return null;
+        }
+      }
+      if (baseVal !== undefined && !/\s/.test(trimmed)) {
+        if (
+          contextEl.closest(
+            '[data-testid="branch-pill-trigger"], [data-testid="project-branch-picker"], [data-testid="project-selector-trigger"]'
+          )
         ) {
           return null;
         }
@@ -497,15 +588,22 @@
       return undefined;
     }
 
+    function replaceTrimmed(raw, trimmed, replacement) {
+      return raw.replace(trimmed, () => replacement);
+    }
+
     function computeTextTranslation(raw, contextEl) {
       if (!raw) return null;
       const trimmed = raw.trim();
       if (!trimmed) return null;
 
       // 1. 无原型静态词典 O(1) 精确匹配（多词附 Sentence/Title Case 大小写回退）+ 上下文消歧（附句尾句号自动回退；函数式 replace 防止 $&/$1 二次展开）
-      let replacement = resolveContextualDictTranslation(trimmed, contextEl, lookupRawDict(trimmed));
+      let replacement = resolveContextualDictTranslation(trimmed, contextEl, lookupRawDict(trimmed), false);
+      if (replacement === null) return null;
       if (typeof replacement !== 'string' && trimmed.endsWith('.')) {
-        const withoutDot = lookupRawDict(trimmed.slice(0, -1));
+        const stem = trimmed.slice(0, -1);
+        const withoutDot = resolveContextualDictTranslation(stem, contextEl, lookupRawDict(stem), false);
+        if (withoutDot === null) return null;
         if (typeof withoutDot === 'string') {
           replacement = withoutDot.endsWith('。') ? withoutDot : withoutDot + '。';
         }
@@ -514,103 +612,158 @@
         if (RE_HAS_CJK.test(replacement) && RE_PURE_ALPHA.test(raw)) {
           return replacement;
         }
-        return raw.replace(trimmed, () => replacement);
+        return replaceTrimmed(raw, trimmed, replacement);
       }
 
       // 2. 快速短路：不含任何英文字母直接跳过动态正则
       if (!RE_HAS_ALPHA.test(trimmed)) return null;
 
+      const isSwarmFrame = typeof IS_SWARM_PLUGIN_FRAME !== 'undefined' && IS_SWARM_PLUGIN_FRAME;
+
       // 3. 首字符 O(1) 分流动态正则匹配
       const c0 = trimmed.charCodeAt(0);
       if (c0 >= 48 && c0 <= 57) {
         // 以数字 '0'-'9' 开头
-        if (RE_PCT_LEFT.test(trimmed)) return raw.replace(RE_PCT_LEFT, '$1% 剩余');
+        const mPct = trimmed.match(RE_PCT_LEFT);
+        if (mPct) return replaceTrimmed(raw, trimmed, mPct[1] + '% 剩余');
         const mWinComb = trimmed.match(RE_WINDOW_LIMIT_COMBINED);
         if (mWinComb) {
           const u = UNIT_MAP_SHORT[mWinComb[2].toLowerCase()] || mWinComb[2];
-          return raw.replace(trimmed, () => mWinComb[1] + ' ' + u + '限额，' + formatCompactDurationZh(mWinComb[3]) + '后重置');
+          return replaceTrimmed(raw, trimmed, mWinComb[1] + ' ' + u + '限额，' + formatCompactDurationZh(mWinComb[3]) + '后重置');
         }
         const mWin = trimmed.match(RE_WINDOW_LIMIT);
         if (mWin) {
           const u = UNIT_MAP_SHORT[mWin[2].toLowerCase()] || mWin[2];
-          return raw.replace(trimmed, () => mWin[1] + ' ' + u + '限额');
+          return replaceTrimmed(raw, trimmed, mWin[1] + ' ' + u + '限额');
         }
         const mRel = trimmed.match(RE_REL_TIME);
         if (mRel) {
           const unit = REL_UNIT_MAP[mRel[2].toLowerCase()] || mRel[2];
-          return raw.replace(trimmed, () => mRel[1] + ' ' + unit + '前');
+          return replaceTrimmed(raw, trimmed, mRel[1] + ' ' + unit + '前');
         }
-        if (RE_UPDATES_COUNT.test(trimmed)) return raw.replace(RE_UPDATES_COUNT, '$1 条进展');
-        if (RE_STEPS_CHIP.test(trimmed)) return raw.replace(RE_STEPS_CHIP, '$1 步');
-        if (RE_DAYS_COUNT.test(trimmed)) return raw.replace(RE_DAYS_COUNT, '$1 天');
-        if (RE_SECONDS_COUNT.test(trimmed)) return raw.replace(RE_SECONDS_COUNT, '$1 秒');
-        if (RE_FILES_CHANGED.test(trimmed)) return raw.replace(RE_FILES_CHANGED, '$1 个文件变更');
-        if (RE_TOOLS.test(trimmed)) return raw.replace(RE_TOOLS, '$1 个工具');
-        if (RE_DEMOTED.test(trimmed)) return raw.replace(RE_DEMOTED, '$1 项已降级');
-        if (RE_EXCLUDED.test(trimmed)) return raw.replace(RE_EXCLUDED, '$1 项已排除');
-        if (RE_TOOLS_EXCLUDED.test(trimmed)) return raw.replace(RE_TOOLS_EXCLUDED, '$1 个工具已排除');
-        if (RE_ACTIVE_CONVS.test(trimmed)) return raw.replace(RE_ACTIVE_CONVS, '$1 个进行中的会话');
-        if (RE_PROJECTS_COUNT.test(trimmed)) return raw.replace(RE_PROJECTS_COUNT, '$1 个项目');
-        if (RE_CALLS_MB.test(trimmed)) return raw.replace(RE_CALLS_MB, '$1 次通话 · $2');
+        const mTasksDone = trimmed.match(RE_SWARM_OF_TASKS_DONE);
+        if (mTasksDone) return replaceTrimmed(raw, trimmed, '已完成 ' + mTasksDone[1] + ' / ' + mTasksDone[2] + ' 项任务');
+        const mOfDone = trimmed.match(RE_SWARM_OF_DONE);
+        if (mOfDone) return replaceTrimmed(raw, trimmed, '已完成 ' + mOfDone[1] + ' / ' + mOfDone[2]);
+        const mThreadsOpen = trimmed.match(RE_SWARM_THREADS_OPEN);
+        if (mThreadsOpen) return replaceTrimmed(raw, trimmed, mThreadsOpen[1] + ' 个进行中的话题');
+        const mUpdCnt = trimmed.match(RE_UPDATES_COUNT);
+        if (mUpdCnt) return replaceTrimmed(raw, trimmed, mUpdCnt[1] + ' 条进展');
+        const mSteps = trimmed.match(RE_STEPS_CHIP);
+        if (mSteps) return replaceTrimmed(raw, trimmed, mSteps[1] + ' 步');
+        const mDays = trimmed.match(RE_DAYS_COUNT);
+        if (mDays) return replaceTrimmed(raw, trimmed, mDays[1] + ' 天');
+        const mSecs = trimmed.match(RE_SECONDS_COUNT);
+        if (mSecs) return replaceTrimmed(raw, trimmed, mSecs[1] + ' 秒');
+        const mFilesChg = trimmed.match(RE_FILES_CHANGED);
+        if (mFilesChg) return replaceTrimmed(raw, trimmed, mFilesChg[1] + ' 个文件变更');
+        const mTools = trimmed.match(RE_TOOLS);
+        if (mTools) return replaceTrimmed(raw, trimmed, mTools[1] + ' 个工具');
+        const mDemoted = trimmed.match(RE_DEMOTED);
+        if (mDemoted) return replaceTrimmed(raw, trimmed, mDemoted[1] + ' 项已降级');
+        const mExcluded = trimmed.match(RE_EXCLUDED);
+        if (mExcluded) return replaceTrimmed(raw, trimmed, mExcluded[1] + ' 项已排除');
+        const mToolsExcl = trimmed.match(RE_TOOLS_EXCLUDED);
+        if (mToolsExcl) return replaceTrimmed(raw, trimmed, mToolsExcl[1] + ' 个工具已排除');
+        const mActiveConvs = trimmed.match(RE_ACTIVE_CONVS);
+        if (mActiveConvs) return replaceTrimmed(raw, trimmed, mActiveConvs[1] + ' 个进行中的会话');
+        const mProjects = trimmed.match(RE_PROJECTS_COUNT);
+        if (mProjects) return replaceTrimmed(raw, trimmed, mProjects[1] + ' 个项目');
+        const mCallsMb = trimmed.match(RE_CALLS_MB);
+        if (mCallsMb) return replaceTrimmed(raw, trimmed, mCallsMb[1] + ' 次通话 · ' + mCallsMb[2]);
         return null;
       }
 
       const firstUpper = trimmed[0].toUpperCase();
       if (firstUpper === 'S') {
-        if (RE_SEE_ALL.test(trimmed)) return raw.replace(RE_SEE_ALL, '查看全部 ($1)');
-        if (RE_SHOW_BREAKDOWNS.test(trimmed)) return raw.replace(RE_SHOW_BREAKDOWNS, '展开明细 ($1 项)');
-        if (RE_SHOW_MORE_SUBAGENTS.test(trimmed)) return raw.replace(RE_SHOW_MORE_SUBAGENTS, '显示另外 $1 个子代理');
-        if (RE_SEARCH_GOOGLE.test(trimmed)) return raw.replace(RE_SEARCH_GOOGLE, (_, q) => '使用 Google 搜索“' + q + '”');
-        const mSysDef = trimmed.match(RE_SYSTEM_DEFAULT_APP);
-        if (mSysDef) return raw.replace(trimmed, () => '系统默认（' + mSysDef[1].trim() + '）');
-        if (!isInHeaderOrBreadcrumb(contextEl)) {
-          const mSearch = trimmed.match(RE_EPHEMERAL_ACTIVE);
-          if (mSearch) {
-            const noun = EPHEMERAL_NOUN_MAP[mSearch[2].toLowerCase()];
-            const out = noun ? EPHEMERAL_VERB_MAP[mSearch[1]] + noun : EPHEMERAL_VERB_MAP[mSearch[1]] + ' ' + mSearch[2];
-            return raw.replace(trimmed, () => out);
-          }
+        const mSeeAll = trimmed.match(RE_SEE_ALL);
+        if (mSeeAll) return replaceTrimmed(raw, trimmed, '查看全部 (' + mSeeAll[1] + ')');
+        const mBreakdowns = trimmed.match(RE_SHOW_BREAKDOWNS);
+        if (mBreakdowns) return replaceTrimmed(raw, trimmed, '展开明细 (' + mBreakdowns[1] + ' 项)');
+        const mMoreSub = trimmed.match(RE_SHOW_MORE_SUBAGENTS);
+        if (mMoreSub) return replaceTrimmed(raw, trimmed, '显示另外 ' + mMoreSub[1] + ' 个子智能体');
+        const mEarlierPosts = trimmed.match(RE_SWARM_SHOW_EARLIER_POSTS);
+        if (mEarlierPosts) {
+          return replaceTrimmed(raw, trimmed, '显示更早的 ' + mEarlierPosts[1] + ' 条发言（还有 ' + mEarlierPosts[2] + ' 条更早）');
         }
+        const mSearchGoogle = trimmed.match(RE_SEARCH_GOOGLE);
+        if (mSearchGoogle) return replaceTrimmed(raw, trimmed, '使用 Google 搜索“' + mSearchGoogle[1] + '”');
+        const mSysDef = trimmed.match(RE_SYSTEM_DEFAULT_APP);
+        if (mSysDef) return replaceTrimmed(raw, trimmed, '系统默认（' + mSysDef[1].trim() + '）');
+        const activeSearch = translateEphemeralActive(trimmed, contextEl);
+        if (activeSearch) return replaceTrimmed(raw, trimmed, activeSearch);
       } else if (firstUpper === 'P') {
-        if (RE_PERM_DELETE.test(trimmed)) {
-          return raw.replace(RE_PERM_DELETE, (_, target, cnt) => '永久删除 ' + target + ' 及 ' + cnt + ' 个进行中的会话。');
+        const mPermDel = trimmed.match(RE_PERM_DELETE);
+        if (mPermDel) {
+          return replaceTrimmed(raw, trimmed, '永久删除 ' + mPermDel[1] + ' 及 ' + mPermDel[2] + ' 个进行中的会话。');
         }
       } else if (firstUpper === 'W' || firstUpper === 'M') {
         if (firstUpper === 'M') {
           const mMoveGrp = trimmed.match(RE_MOVE_TO_GROUP_NAMED);
-          if (mMoveGrp) return raw.replace(trimmed, () => '移至分组：' + mMoveGrp[1].trim());
+          if (mMoveGrp) return replaceTrimmed(raw, trimmed, '移至分组：' + mMoveGrp[1].trim());
         }
         const mNamed = trimmed.match(RE_NAMED_LIMIT_RESETS);
         if (mNamed) {
           const pZh = NAMED_PERIOD_MAP[mNamed[1].toLowerCase()] || mNamed[1];
-          return raw.replace(trimmed, () => pZh + '限额，' + formatCompactDurationZh(mNamed[2]) + '后重置');
+          return replaceTrimmed(raw, trimmed, pZh + '限额，' + formatCompactDurationZh(mNamed[2]) + '后重置');
         }
         if (firstUpper === 'W') {
-          if (RE_WORKED_FOR_UPDATES.test(trimmed)) {
-            return raw.replace(RE_WORKED_FOR_UPDATES, (_, dur, cnt) => '已工作 ' + dur.trim() + ' · ' + cnt + ' 条进展');
+          const mWaitingOn = trimmed.match(RE_SWARM_WAITING_ON);
+          if (mWaitingOn) return replaceTrimmed(raw, trimmed, '等待 ' + mWaitingOn[1]);
+          const mWorkingFor = trimmed.match(RE_SWARM_WORKING_FOR);
+          if (mWorkingFor) return replaceTrimmed(raw, trimmed, '正在为 ' + mWorkingFor[1] + ' 工作');
+          const mWorkedUpd = trimmed.match(RE_WORKED_FOR_UPDATES);
+          if (mWorkedUpd) {
+            return replaceTrimmed(raw, trimmed, '已工作 ' + mWorkedUpd[1].trim() + ' · ' + mWorkedUpd[2] + ' 条进展');
           }
-          if (RE_WORKED_FOR.test(trimmed)) return raw.replace(RE_WORKED_FOR, '已工作 $1');
+          const mWorked = trimmed.match(RE_WORKED_FOR);
+          if (mWorked) return replaceTrimmed(raw, trimmed, '已工作 ' + mWorked[1]);
         }
       } else if (firstUpper === 'T') {
-        if (RE_THOUGHT_FOR.test(trimmed)) return raw.replace(RE_THOUGHT_FOR, '已思考 $1');
-        if (RE_THINKING_FOR.test(trimmed)) return raw.replace(RE_THINKING_FOR, '正在思考 $1');
-        if (RE_DELETE_RECORDINGS_CONFIRM.test(trimmed)) {
-          return raw.replace(
-            RE_DELETE_RECORDINGS_CONFIRM,
-            '这将从您的设备中删除 $1 条通话录音（$2），此操作无法撤销。'
-          );
+        const mThought = trimmed.match(RE_THOUGHT_FOR);
+        if (mThought) return replaceTrimmed(raw, trimmed, '已思考 ' + mThought[1]);
+        const mThinking = trimmed.match(RE_THINKING_FOR);
+        if (mThinking) return replaceTrimmed(raw, trimmed, '正在思考 ' + mThinking[1]);
+        const mSwarmTo = trimmed.match(RE_SWARM_TO);
+        if (mSwarmTo && (isSwarmFrame || mSwarmTo[1].startsWith('@'))) {
+          return replaceTrimmed(raw, trimmed, '发给 ' + mSwarmTo[1]);
+        }
+        const mDelRec = trimmed.match(RE_DELETE_RECORDINGS_CONFIRM);
+        if (mDelRec) {
+          return replaceTrimmed(raw, trimmed, '这将从您的设备中删除 ' + mDelRec[1] + ' 条通话录音（' + mDelRec[2] + '），此操作无法撤销。');
         }
         const mQuotaT = translateQuotaExhaustedZh(trimmed);
-        if (mQuotaT) return raw.replace(trimmed, () => mQuotaT);
+        if (mQuotaT) return replaceTrimmed(raw, trimmed, mQuotaT);
+      } else if (firstUpper === 'F') {
+        const mSwarmFrom = trimmed.match(RE_SWARM_FROM);
+        if (mSwarmFrom && (isSwarmFrame || mSwarmFrom[1].startsWith('@'))) {
+          return replaceTrimmed(raw, trimmed, '来自 ' + mSwarmFrom[1]);
+        }
+      } else if (firstUpper === 'O') {
+        const mOpenHandle = trimmed.match(RE_SWARM_OPEN_HANDLE);
+        if (mOpenHandle) return replaceTrimmed(raw, trimmed, '打开 ' + mOpenHandle[1]);
+      } else if (firstUpper === 'G') {
+        const mGoBoard = trimmed.match(RE_SWARM_GOTO_SEQ);
+        if (mGoBoard) return replaceTrimmed(raw, trimmed, '跳转到看板中的 #' + mGoBoard[1]);
       } else if (firstUpper === 'E' || firstUpper === 'R' || firstUpper === 'L') {
+        if (firstUpper === 'E') {
+          const mExportPct = trimmed.match(RE_SWARM_EXPORTING_PCT);
+          if (mExportPct) return replaceTrimmed(raw, trimmed, '正在导出 ' + mExportPct[1] + '%');
+        }
+        if (firstUpper === 'L') {
+          const mLoadEarlier = trimmed.match(RE_SWARM_LOADING_EARLIER_POSTS);
+          if (mLoadEarlier) return replaceTrimmed(raw, trimmed, '正在加载更早的发言…（还有 ' + mLoadEarlier[1] + ' 条更早）');
+        }
         if (firstUpper === 'R') {
+          const mRenderFile = trimmed.match(RE_SWARM_RENDERING_FILE);
+          if (mRenderFile) return replaceTrimmed(raw, trimmed, '正在渲染 ' + mRenderFile[1] + '…');
           const mRemRecent = trimmed.match(RE_REMOVE_FROM_RECENT);
           if (mRemRecent) {
-            return raw.replace(trimmed, () => '从最近记录移除 ' + mRemRecent[1].trim());
+            return replaceTrimmed(raw, trimmed, '从最近记录移除 ' + mRemRecent[1].trim());
           }
           const mResets = trimmed.match(RE_RESETS_IN);
           if (mResets) {
-            return raw.replace(trimmed, () => formatCompactDurationZh(mResets[1]) + '后重置');
+            return replaceTrimmed(raw, trimmed, formatCompactDurationZh(mResets[1]) + '后重置');
           }
         }
         if (RE_EPHEMERAL_SUMMARY.test(trimmed)) {
@@ -618,57 +771,64 @@
             .split(/,\s*/)
             .map((part) => translateEphemeralClause(part))
             .join('、');
-          return raw.replace(trimmed, () => translatedSummary);
+          return replaceTrimmed(raw, trimmed, translatedSummary);
         }
-        const inHdr = isInHeaderOrBreadcrumb(contextEl);
-        if (!inHdr) {
-          const mActive = trimmed.match(RE_EPHEMERAL_ACTIVE);
-          if (mActive) {
-            const noun = EPHEMERAL_NOUN_MAP[mActive[2].toLowerCase()];
-            const out = noun ? EPHEMERAL_VERB_MAP[mActive[1]] + noun : EPHEMERAL_VERB_MAP[mActive[1]] + ' ' + mActive[2];
-            return raw.replace(trimmed, () => out);
-          }
+        const activeEphemeral = translateEphemeralActive(trimmed, contextEl);
+        if (activeEphemeral) {
+          return replaceTrimmed(raw, trimmed, activeEphemeral);
         }
         if (firstUpper === 'R') {
-          if (RE_RUNNING_FOR.test(trimmed)) {
-            return raw.replace(RE_RUNNING_FOR, '已运行 $1');
+          const mRunFor = trimmed.match(RE_RUNNING_FOR);
+          if (mRunFor) {
+            return replaceTrimmed(raw, trimmed, '已运行 ' + mRunFor[1]);
           }
-          if (!inHdr && RE_RUNNING_CMD.test(trimmed)) {
-            return raw.replace(RE_RUNNING_CMD, (_, cmd) => '正在运行 ' + cmd);
+          if (!isInHeaderOrBreadcrumb(contextEl)) {
+            const mRunCmd = trimmed.match(RE_RUNNING_CMD);
+            if (mRunCmd) return replaceTrimmed(raw, trimmed, '正在运行 ' + mRunCmd[1]);
           }
         }
       } else if (firstUpper === 'D') {
         const mDelEnt = trimmed.match(RE_DELETE_ENTITY);
         if (mDelEnt) {
           const entMap = { project: '项目', workspace: '工作区', group: '分组', conversation: '对话' };
-          return raw.replace(trimmed, () => '删除' + (entMap[mDelEnt[1].toLowerCase()] || mDelEnt[1]));
+          return replaceTrimmed(raw, trimmed, '删除' + (entMap[mDelEnt[1].toLowerCase()] || mDelEnt[1]));
         }
         const mNamedD = trimmed.match(RE_NAMED_LIMIT_RESETS);
         if (mNamedD) {
           const pZh = NAMED_PERIOD_MAP[mNamedD[1].toLowerCase()] || mNamedD[1];
-          return raw.replace(trimmed, () => pZh + '限额，' + formatCompactDurationZh(mNamedD[2]) + '后重置');
+          return replaceTrimmed(raw, trimmed, pZh + '限额，' + formatCompactDurationZh(mNamedD[2]) + '后重置');
         }
-        if (RE_DELETED_RECORDINGS.test(trimmed)) {
-          return raw.replace(RE_DELETED_RECORDINGS, '已删除 $1 条录音 ($2)');
+        const mDelRecs = trimmed.match(RE_DELETED_RECORDINGS);
+        if (mDelRecs) {
+          return replaceTrimmed(raw, trimmed, '已删除 ' + mDelRecs[1] + ' 条录音 (' + mDelRecs[2] + ')');
+        }
+        const mDlFile = trimmed.match(RE_SWARM_DOWNLOAD_FILE);
+        if (mDlFile) {
+          return replaceTrimmed(raw, trimmed, '下载 ' + mDlFile[1]);
         }
       } else if (firstUpper === 'V') {
         const mVerTxt = trimmed.match(RE_ARIA_VERSION);
         if (mVerTxt) {
-          return raw.replace(trimmed, () => '版本 ' + mVerTxt[1].trim());
+          return replaceTrimmed(raw, trimmed, '版本 ' + mVerTxt[1].trim());
         }
       } else if (firstUpper === 'U') {
+        const mUpNext = trimmed.match(RE_SWARM_UP_NEXT);
+        if (mUpNext) {
+          return replaceTrimmed(raw, trimmed, '接下来 · ' + mUpNext[1].trim());
+        }
         const mUpd = trimmed.match(RE_UPDATED_AT);
         if (mUpd) {
-          return raw.replace(trimmed, () => formatUpdatedAtZh(mUpd[1], mUpd[2]));
+          return replaceTrimmed(raw, trimmed, formatUpdatedAtZh(mUpd[1], mUpd[2]));
         }
       } else if (firstUpper === 'Z') {
-        if (RE_ZIPPING_FOLDER.test(trimmed)) {
-          return raw.replace(RE_ZIPPING_FOLDER, (_, folder) => '正在打包 ' + folder + '…');
+        const mZip = trimmed.match(RE_ZIPPING_FOLDER);
+        if (mZip) {
+          return replaceTrimmed(raw, trimmed, '正在打包 ' + mZip[1] + '…');
         }
       } else if (firstUpper === 'Y') {
         const mPlan = trimmed.match(RE_YOUR_PLAN);
         if (mPlan) {
-          return raw.replace(trimmed, () => '当前套餐：' + mPlan[1].trim());
+          return replaceTrimmed(raw, trimmed, '当前套餐：' + mPlan[1].trim());
         }
         const mUsed = trimmed.match(RE_USED_LIMIT);
         if (mUsed) {
@@ -684,20 +844,20 @@
             .replace(/(\d+)\s*seconds?/gi, '$1 秒')
             .replace(/,\s*/g, ' ')
             .trim();
-          return '您已消耗' + degree + type + '额度，将在 ' + timeStr + ' 后完全重置。';
+          return replaceTrimmed(raw, trimmed, '您已消耗' + degree + type + '额度，将在 ' + timeStr + ' 后完全重置。');
         }
         const mNotUsed = trimmed.match(RE_NOT_USED_LIMIT);
         if (mNotUsed) {
           const typeMap = { weekly: '每周', '5-hour': '5 小时', 'five-hour': '5 小时', daily: '每日' };
           const type = typeMap[mNotUsed[1].toLowerCase()] || mNotUsed[1];
-          return '您尚未消耗任何' + type + '额度。';
+          return replaceTrimmed(raw, trimmed, '您尚未消耗任何' + type + '额度。');
         }
         const mQuotaY = translateQuotaExhaustedZh(trimmed);
-        if (mQuotaY) return raw.replace(trimmed, () => mQuotaY);
+        if (mQuotaY) return replaceTrimmed(raw, trimmed, mQuotaY);
       } else if (firstUpper === 'A') {
         const mCred = trimmed.match(RE_AVAILABLE_AI_CREDITS);
         if (mCred) {
-          return raw.replace(trimmed, () => '可用 AI 积分：' + mCred[1].trim());
+          return replaceTrimmed(raw, trimmed, '可用 AI 点数：' + mCred[1].trim());
         }
       }
 
@@ -706,41 +866,45 @@
         if (mSideStart) {
           const quote = mSideStart[2].trim();
           const zh = mSideStart[1] === 'during' ? '发起于「' + quote + '」期间' : '发起自「' + quote + '」';
-          return raw.replace(trimmed, () => zh);
+          return replaceTrimmed(raw, trimmed, zh);
         }
       }
 
       if (trimmed.length < 40 && firstUpper === 'E') {
         const mExit = trimmed.match(RE_EXITED_CODE_ONLY);
         if (mExit) {
-          return raw.replace(trimmed, () => '退出码 ' + mExit[1] + (mExit[2] ? '。' : ''));
+          return replaceTrimmed(raw, trimmed, '退出码 ' + mExit[1] + (mExit[2] ? '。' : ''));
         }
       }
       if (trimmed.length < 240 && trimmed.includes('Exited with code')) {
         const mSumExit = trimmed.match(RE_SUMMARY_EXITED_CODE);
         if (mSumExit) {
-          return raw.replace(trimmed, () => mSumExit[1].trim() + ' · 退出码 ' + mSumExit[2]);
+          return replaceTrimmed(raw, trimmed, mSumExit[1].trim() + ' · 退出码 ' + mSumExit[2]);
         }
       }
 
       const lastCh = trimmed.charCodeAt(trimmed.length - 1);
       if (lastCh === 41) {
-        if (trimmed.endsWith(' (Default)') && trimmed.length > 10) {
-          const base = trimmed.slice(0, -10).trim();
-          const baseZh = lookupRawDict(base) || base;
-          return raw.replace(trimmed, () => baseZh + '（默认）');
+        if (RE_SUFFIX_DEFAULT.test(trimmed)) {
+          const base = trimmed.replace(RE_SUFFIX_DEFAULT, '').trim();
+          if (base) {
+            const baseZh = resolveContextualDictTranslation(base, contextEl, lookupRawDict(base), false) || base;
+            return replaceTrimmed(raw, trimmed, baseZh + '（默认）');
+          }
         }
-        if (trimmed.endsWith(' (experimental)') && trimmed.length > 15) {
-          const base = trimmed.slice(0, -15).trim();
-          const baseZh = lookupRawDict(base) || base;
-          return raw.replace(trimmed, () => baseZh + '（实验性）');
+        if (RE_SUFFIX_EXPERIMENTAL.test(trimmed)) {
+          const base = trimmed.replace(RE_SUFFIX_EXPERIMENTAL, '').trim();
+          if (base) {
+            const baseZh = resolveContextualDictTranslation(base, contextEl, lookupRawDict(base), false) || base;
+            return replaceTrimmed(raw, trimmed, baseZh + '（实验性）');
+          }
         }
       }
       if (lastCh === 116 || lastCh === 84) {
         const mModLim = trimmed.match(RE_MODEL_NAMED_LIMIT);
         if (mModLim) {
           const pZh = NAMED_PERIOD_MAP[mModLim[2].toLowerCase()] || mModLim[2];
-          return raw.replace(trimmed, () => mModLim[1].trim() + ' ' + pZh + '限额');
+          return replaceTrimmed(raw, trimmed, mModLim[1].trim() + ' ' + pZh + '限额');
         }
       }
 
@@ -888,7 +1052,10 @@
 
     function resolveAttrTranslation(atrim, el) {
       const directHit = lookupRawDict(atrim);
-      if (typeof directHit === 'string') return resolveContextualDictTranslation(atrim, el, directHit);
+      if (typeof directHit === 'string') {
+        const resolved = resolveContextualDictTranslation(atrim, el, directHit, true);
+        return typeof resolved === 'string' ? resolved : null;
+      }
       const mModel = atrim.match(RE_ARIA_MODEL);
       if (mModel) {
         let mName = mModel[1].trim();
@@ -1041,18 +1208,34 @@
     scanBodyFn = scanAndTranslate;
     if (document.body) {
       scanAndTranslate(document.body);
+      i18nInitialScanDone = true;
     }
 
     const dirtyRoots = new Set();
+    let disposed = false;
     let pending = false;
+    let rafId = null;
     let fallbackTimer = null;
 
-    function flushTranslations() {
+    function clearScheduledFlush() {
       pending = false;
-      if (fallbackTimer) {
+      if (rafId !== null) {
+        if (typeof cancelAnimationFrame === 'function') {
+          try {
+            cancelAnimationFrame(rafId);
+          } catch (e) {}
+        }
+        rafId = null;
+      }
+      if (fallbackTimer !== null) {
         clearTimeout(fallbackTimer);
         fallbackTimer = null;
       }
+    }
+
+    function flushTranslations() {
+      clearScheduledFlush();
+      if (disposed) return;
       if (dirtyRoots.size === 0) return;
 
       if (dirtyRoots.size > 200) {
@@ -1086,13 +1269,16 @@
     }
 
     function scheduleFlush() {
-      if (pending) return;
+      if (disposed || pending) return;
       pending = true;
-      requestAnimationFrame(flushTranslations);
+      if (typeof requestAnimationFrame === 'function') {
+        rafId = requestAnimationFrame(flushTranslations);
+      }
       fallbackTimer = setTimeout(flushTranslations, 80);
     }
 
     window.__ag_i18n_observer = new MutationObserver((mutations) => {
+      if (disposed) return;
       const batchSafeSet = new Set();
       for (let i = 0; i < mutations.length; i++) {
         const m = mutations[i];
@@ -1128,10 +1314,24 @@
     if (document.body) {
       window.__ag_i18n_observer.observe(document.body, I18N_OBS_OPTS);
     }
+    if (Array.isArray(window.__ag_cleanup_fns)) {
+      window.__ag_cleanup_fns.push(() => {
+        disposed = true;
+        clearScheduledFlush();
+        dirtyRoots.clear();
+        if (window.__ag_i18n_observer) {
+          try {
+            window.__ag_i18n_observer.disconnect();
+          } catch (e) {}
+          window.__ag_i18n_observer = null;
+        }
+      });
+    }
   } else {
     restoreNativeArrayMap();
     if (document.body) {
       // 若用户在配置中关闭了 i18n 模块，实时将已翻译的文本与属性还原为原始英文
       restoreAllTranslations(document.body);
+      i18nInitialScanDone = true;
     }
   }

@@ -12,7 +12,9 @@
   if (window.top !== window && !IS_SWARM_PLUGIN_FRAME) return;
   if (!boot || typeof boot !== 'object') return;
 
-  const PATCH_VERSION = boot.version || '1.4.2';
+  const PATCH_VERSION = boot.version || '1.4.3';
+  const CORE_HASH = String(boot.coreHash || '');
+  const DAEMON_BOOT_ID = String(boot.daemonBootId || '');
   const BUNDLE_BOOT_SEQ = (window.__ag_bundle_boot_seq = (Number(window.__ag_bundle_boot_seq) || 0) + 1);
   const ENABLED = boot.enabled !== false;
   const CSS_TEXT = boot.cssText || '';
@@ -367,13 +369,14 @@
     }
     window.__ag_zoom_keydown_fn = null;
     window.__ag_settings_click_fn = null;
+    window.__ag_on_route_change = null;
     window.__ag_body_ready = false;
     applyThemeVars({});
     for (const attr of ['data-ag-preset', 'data-ag-theme-mode', 'data-ag-page-type', 'data-ag-os', 'data-ag-custom-font-size']) {
       document.documentElement.removeAttribute(attr);
     }
     restoreAllTranslations(document.body);
-    window.__ag_patch_version = PATCH_VERSION + '-disabled';
+    window.__ag_patch_version = PATCH_VERSION;
     return;
   }
 

@@ -15,7 +15,8 @@ export const CORE_DIR = path.join(ROOT_DIR, 'core');
 export const STYLES_DIR = path.join(CORE_DIR, 'styles');
 export const RUNTIME_DIR = path.join(CORE_DIR, 'runtime');
 export const USER_DIR = path.join(ROOT_DIR, 'user');
-export const BASE_VERSION = '1.4.2';
+export const BASE_VERSION = '1.4.3';
+export const DAEMON_BOOT_ID = `${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
 
 export function parseDaemonCliArgs(argv = process.argv.slice(2)) {
   const hasFlag = (f) => argv.some((a) => a === f || a.startsWith(f + '='));
@@ -252,10 +253,17 @@ export function sanitizeConfigPatch(currentCfg, patch) {
   return base;
 }
 
-export function createBundleController({ safeMode = false, cliChannel = null, hasSqlite = false, cliOpts = {} } = {}) {
+export function createBundleController({
+  safeMode = false,
+  cliChannel = null,
+  hasSqlite = false,
+  cliOpts = {},
+  daemonBootId = DAEMON_BOOT_ID
+} = {}) {
   let cachedBundleSig = '';
   let cachedInjectScript = '';
   let cachedPatchVersion = '';
+  let cachedCoreHash = '';
   let activeConfig = {
     enabled: true,
     channel: 'auto',
@@ -293,7 +301,8 @@ export function createBundleController({ safeMode = false, cliChannel = null, ha
   function rebuildBundleIfNeeded(force = false) {
     const styleFiles = listSortedFiles(STYLES_DIR, '.css');
     const runtimeFiles = listSortedFiles(RUNTIME_DIR, '.js');
-    const coreFiles = [...styleFiles, path.join(CORE_DIR, 'i18n.json'), ...runtimeFiles];
+    const manifestPath = path.join(CORE_DIR, 'manifest.json');
+    const coreFiles = [...styleFiles, path.join(CORE_DIR, 'i18n.json'), manifestPath, ...runtimeFiles];
     const userFiles = safeMode
       ? []
       : [
@@ -435,26 +444,54 @@ export function createBundleController({ safeMode = false, cliChannel = null, ha
       endpoints
     };
 
-    const activeStyleFiles = styleFiles.filter((filePath) => {
-      const base = path.basename(filePath);
+    const allStyleEntries = styleFiles.map((filePath) => ({
+      filePath,
+      base: path.basename(filePath),
+      text: readTextSafe(filePath, '')
+    }));
+    const activeStyleEntries = allStyleEntries.filter(({ base }) => {
       if (base === '30-telemetry.css') return Boolean(modules.metrics);
       if (base === '35-quota.css') return Boolean(modules.quota || modules.quotaSidebar);
       if (base === '40-prompt-suggestions.css') return Boolean(modules.promptSuggestions);
       if (base === '45-settings-ui.css') return Boolean(enabled);
       return modules.theme !== false;
     });
-    const baseCss = activeStyleFiles.map((f) => readTextSafe(f, '')).join('\n\n');
+    const baseCss = activeStyleEntries.map((entry) => entry.text).join('\n\n');
     const customCss = !safeMode && modules.customCss ? readTextSafe(path.join(USER_DIR, 'custom.css'), '') : '';
-    const baseDict = modules.i18n ? readJsonSafe(path.join(CORE_DIR, 'i18n.json'), {}) : {};
+    const rawI18nText = readTextSafe(path.join(CORE_DIR, 'i18n.json'), '');
+    let baseDict = {};
+    if (modules.i18n && rawI18nText) {
+      try {
+        baseDict = JSON.parse(stripUtf8Bom(rawI18nText));
+      } catch {
+        baseDict = {};
+      }
+    }
     const rawOverrideDict =
       modules.i18n && !safeMode ? readJsonSafe(path.join(USER_DIR, 'i18n.override.json'), {}) : {};
     const mergedDict = modules.i18n ? Object.assign({}, baseDict, normalizeOverrideDict(rawOverrideDict)) : {};
     const customJs = !safeMode && modules.customJs ? readTextSafe(path.join(USER_DIR, 'custom.js'), '') : '';
     const runtimeTemplate = runtimeFiles.map((f) => readTextSafe(f, '')).join('\n');
 
+    const manifestText = readTextSafe(manifestPath, '');
+    const coreHasher = crypto.createHash('sha256').update(BASE_VERSION);
+    if (manifestText) {
+      coreHasher.update('\n---manifest---\n').update(manifestText);
+    } else {
+      coreHasher
+        .update('\n---runtime---\n')
+        .update(runtimeTemplate)
+        .update('\n---styles---\n')
+        .update(allStyleEntries.map((entry) => `${entry.base}\n${entry.text}`).join('\n\n'))
+        .update('\n---i18n---\n')
+        .update(rawI18nText);
+    }
+    cachedCoreHash = coreHasher.digest('hex').slice(0, 12);
+
     const hash = crypto
       .createHash('sha256')
       .update(String(enabled))
+      .update(cachedCoreHash)
       .update(runtimeTemplate)
       .update(baseCss)
       .update(customCss)
@@ -483,6 +520,8 @@ export function createBundleController({ safeMode = false, cliChannel = null, ha
 
     const bootPayload = {
       version: cachedPatchVersion,
+      coreHash: cachedCoreHash,
+      daemonBootId,
       platform: process.platform,
       enabled,
       preset,
@@ -555,7 +594,9 @@ export function createBundleController({ safeMode = false, cliChannel = null, ha
     getState: () => ({
       activeConfig,
       cachedInjectScript,
-      cachedPatchVersion
+      cachedPatchVersion,
+      cachedCoreHash,
+      daemonBootId
     })
   };
 }

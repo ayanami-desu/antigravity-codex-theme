@@ -1056,3 +1056,265 @@ test('gauge style renders enlarged 56x30 SVG arc and high-specificity percentage
   );
   for (const fn of sandbox.__ag_cleanup_fns) fn();
 });
+
+test('Quota-A: matchActiveQuotaGroupIndex matches standalone Gemini 4 Argon pool via displayName when models is empty', () => {
+  const h = loadQuotaHelpers();
+  const groups = h.parseQuotaSummary({
+    response: {
+      groups: [
+        {
+          displayName: 'Gemini Models',
+          description: 'Models within this group: Gemini 4 Neon, Gemini 4 Carbon, Gemini 4 Hydrogen, Gemini 3.8 Flash',
+          buckets: [
+            {
+              bucketId: 'gemini-5h',
+              window: '5h',
+              remaining: { case: 'remainingFraction', value: 0.9 },
+              resetTime: { seconds: '1795631635' }
+            }
+          ]
+        },
+        {
+          displayName: 'Claude and GPT models',
+          description: 'Models within this group: Claude Opus 5.5, Claude Sonnet 5.5, GPT-OSS 120B',
+          buckets: [
+            {
+              bucketId: '3p-5h',
+              window: '5h',
+              remaining: { case: 'remainingFraction', value: 0.8 },
+              resetTime: { seconds: '1795631013' }
+            }
+          ]
+        },
+        {
+          displayName: 'Gemini 4 Argon',
+          description: '',
+          buckets: [
+            {
+              bucketId: 'argon-5h',
+              window: '5h',
+              remaining: { case: 'remainingFraction', value: 0.62 },
+              resetTime: { seconds: '1795639999' }
+            }
+          ]
+        }
+      ]
+    }
+  });
+
+  assert.deepEqual(Array.from(groups[2].models), [], 'Standalone Gemini 4 Argon group has empty models list');
+  assert.equal(h.matchActiveQuotaGroupIndex(groups, 'Gemini 4 Argon (Medium)'), 2);
+  assert.equal(h.matchActiveQuotaGroupIndex(groups, 'Gemini 4 Argon'), 2);
+  assert.equal(h.matchActiveQuotaGroupIndex(groups, 'Gemini 4 Neon'), 0);
+  assert.equal(h.matchActiveQuotaGroupIndex(groups, 'Gemini 4 Neon Extra High'), 0);
+  assert.equal(h.matchActiveQuotaGroupIndex(groups, 'Gemini 3.8 Flash'), 0);
+  assert.equal(h.matchActiveQuotaGroupIndex(groups, 'Claude Opus 5.5 (High)'), 1);
+  assert.equal(h.matchActiveQuotaGroupIndex(groups, 'Gemini 9 Ultra'), 0, 'Unknown Gemini model should fall back to generic Gemini Models');
+
+  // Ordering independence: standalone Gemini 4 Argon before generic Gemini Models
+  const reordered = [groups[2], groups[0], groups[1]];
+  assert.equal(h.matchActiveQuotaGroupIndex(reordered, 'Gemini 4 Argon (Medium)'), 0);
+  assert.equal(h.matchActiveQuotaGroupIndex(reordered, 'Gemini 4 Neon'), 1);
+  assert.equal(
+    h.matchActiveQuotaGroupIndex(reordered, 'Gemini 9 Ultra'),
+    1,
+    'Unknown Gemini fallback should prefer generic Gemini Models over standalone pool'
+  );
+
+  // Generic pool name must NOT outscore a specific model in another pool's models list
+  const genericVsSpecific = [
+    { displayName: 'Gemini Models', description: '', models: ['Gemini 4 Neon'] },
+    { displayName: 'Special Pool', description: '', models: ['Gemini Ultra'] }
+  ];
+  assert.equal(
+    h.matchActiveQuotaGroupIndex(genericVsSpecific, 'Gemini Pro Ultra'),
+    1,
+    'Generic Gemini Models displayName must not override specific models match'
+  );
+
+  // Tie-break: explicit models match wins over displayName match when scores tie
+  const tieGroups = [
+    { displayName: 'Gemini 4 Argon', description: '', models: [] },
+    { displayName: 'Dedicated Pool', description: '', models: ['Gemini 4 Argon'] }
+  ];
+  assert.equal(
+    h.matchActiveQuotaGroupIndex(tieGroups, 'Gemini 4 Argon (Medium)'),
+    1,
+    'g.models should win tie-break over g.displayName when scores are equal'
+  );
+});
+
+test('Quota-B: formatShortPoolLabel keeps Gemini Models as Gemini while giving distinct labels to specific Gemini pools', () => {
+  const h = loadQuotaHelpers();
+
+  assert.equal(h.formatShortPoolLabel('Gemini Models'), 'Gemini');
+  assert.equal(h.formatShortPoolLabel('Gemini'), 'Gemini');
+  assert.equal(h.formatShortPoolLabel('Gemini Model'), 'Gemini');
+  assert.equal(h.formatShortPoolLabel('Claude and GPT models'), 'Claude·GPT');
+  assert.equal(h.formatShortPoolLabel('Experimental Models'), 'Experimental');
+
+  assert.equal(h.formatShortPoolLabel('Gemini 4 Argon'), 'Gemini 4 Argon');
+  assert.equal(h.formatShortPoolLabel('Gemini 4 Argon Models'), 'Gemini 4 Argon');
+  assert.equal(h.formatShortPoolLabel('Gemini 3.8 Flash'), 'Gemini 3.8 Flash');
+  assert.notEqual(
+    h.formatShortPoolLabel('Gemini Models'),
+    h.formatShortPoolLabel('Gemini 4 Argon'),
+    'Generic Gemini pool and standalone Gemini 4 Argon pool must have distinct short labels'
+  );
+});
+
+test('Quota-C: formatQuotaCountdownLabel respects compact for <24h and 35-quota.css prevents crow/orow reset-time overflow', async () => {
+  const h = loadQuotaHelpers();
+  const baseNow = new Date(2026, 10, 26, 8, 0, 0).getTime();
+  const under24h = { resetMs: baseNow + (14 * 60 + 30) * 60000, remainingFraction: 0.72 };
+
+  // Non-compact (<24h) preserved verbatim
+  assert.equal(h.formatQuotaCountdownLabel(under24h, true, baseNow, false), '14:30 后重置');
+  assert.equal(h.formatQuotaCountdownLabel(under24h, false, baseNow, false), 'resets 14:30');
+
+  // Compact (<24h) emits concise width-safe countdown
+  assert.equal(h.formatQuotaCountdownLabel(under24h, true, baseNow, true), '14:30 后');
+  assert.equal(h.formatQuotaCountdownLabel(under24h, false, baseNow, true), '14:30');
+
+  // CSS assertions: flexible 4th grid column + ellipsis truncation on crow/orow reset time
+  const css = fs.readFileSync(path.join(ROOT_DIR, 'core', 'styles', '35-quota.css'), 'utf8');
+  assert.match(
+    css,
+    /#ag-quota \.ag-quota-crow\s*\{[^}]*grid-template-columns:\s*22px\s+minmax\([^)]+\)\s+minmax\([^)]+\)\s+minmax\(54px,\s*auto\);/,
+    '.ag-quota-crow must use flexible minmax(54px, auto) 4th column instead of fixed 54px'
+  );
+  assert.match(
+    css,
+    /#ag-quota \.ag-quota-crow em\s*\{[^}]*min-width:\s*0;[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap;/,
+    '.ag-quota-crow em must clip overflow cleanly with ellipsis'
+  );
+  assert.match(
+    css,
+    /#ag-quota \.ag-quota-orow\s*\{[^}]*grid-template-columns:\s*22px\s+minmax\([^)]+\)\s+minmax\([^)]+\)\s+minmax\(54px,\s*auto\);/,
+    '.ag-quota-orow must use flexible minmax(54px, auto) 4th column instead of fixed 54px'
+  );
+  assert.match(
+    css,
+    /#ag-quota \.ag-quota-orow em\s*\{[^}]*min-width:\s*0;[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap;/,
+    '.ag-quota-orow em must clip overflow cleanly with ellipsis'
+  );
+
+  // End-to-end runtime verification for compact/rows rendering and standalone Gemini 4 Argon pool selection
+  const parts = ['00-head.js', '30-antigravity-probe.js', '55-quota-ui.js', '90-tail.js'];
+  const code = parts.map((p) => fs.readFileSync(path.join(RUNTIME_DIR, p), 'utf8')).join('\n');
+
+  class FixedDate extends Date {
+    constructor(...args) {
+      super(...(args.length === 0 ? [baseNow] : args));
+    }
+    static now() {
+      return baseNow;
+    }
+  }
+
+  const body = new FakeElement('BODY');
+  body._isRoot = true;
+  const head = new FakeElement('HEAD');
+  head._isRoot = true;
+  const sidebarBottom = new FakeElement('DIV');
+  sidebarBottom.appendChild(new FakeElement('BUTTON', { 'data-testid': 'settings-button' }));
+  body.appendChild(sidebarBottom);
+  const modelTrigger = new FakeElement('BUTTON', {
+    'data-testid': 'model-selector-trigger',
+    'aria-label': 'Model: Gemini 4 Argon (Medium)',
+    textContent: 'Gemini 4 Argon (Medium)'
+  });
+  body.appendChild(modelTrigger);
+
+  const threePoolRes = {
+    response: {
+      groups: [
+        {
+          displayName: 'Gemini Models',
+          description: 'Models within this group: Gemini 4 Neon, Gemini 3.8 Flash',
+          buckets: [
+            {
+              bucketId: 'g-5h',
+              window: '5h',
+              remaining: { case: 'remainingFraction', value: 0.85 },
+              resetTime: { seconds: String(Math.floor((baseNow + 283 * 60000) / 1000)) }
+            }
+          ]
+        },
+        {
+          displayName: 'Gemini 4 Argon',
+          description: '',
+          buckets: [
+            {
+              bucketId: 'a-5h',
+              window: '5h',
+              remaining: { case: 'remainingFraction', value: 0.62 },
+              resetTime: { seconds: String(Math.floor((baseNow + (14 * 60 + 30) * 60000) / 1000)) }
+            }
+          ]
+        }
+      ]
+    }
+  };
+  const fakeService = { async retrieveUserQuotaSummary() { return threePoolRes; } };
+  sidebarBottom.__reactFiber$test = { memoizedProps: { value: { core: { cloudCodeService: fakeService } } }, return: null };
+
+  const fakeDoc = {
+    head, body, hidden: false, documentElement: new FakeElement('HTML'),
+    getElementById: (id) => head.querySelector('#' + id) || body.querySelector('#' + id),
+    createElement: (tag) => new FakeElement(tag),
+    getElementsByTagName: (t) => (t === 'head' ? [head] : []),
+    querySelector: (sel) => body.querySelector(sel),
+    querySelectorAll: (sel) => body.querySelectorAll(sel),
+    addEventListener() {}, removeEventListener() {}
+  };
+  const sandbox = {
+    Date: FixedDate,
+    __AG_BOOT_PAYLOAD__: {
+      version: '1.4.2-test', platform: 'darwin', enabled: true, cssText: '', customCss: '', themeVars: {}, i18nDict: {},
+      quotaStyle: 'compact',
+      quotaOtherStyle: 'rows',
+      modules: { theme: false, i18n: true, metrics: false, quota: false, quotaSidebar: true, promptSuggestions: false, deadlockHealer: false, zoomShortcuts: false },
+      selectors: {}, userConfig: { quotaStyle: 'compact', quotaOtherStyle: 'rows', modules: { i18n: true, quota: false, quotaSidebar: true } }, customJs: ''
+    },
+    location: { pathname: '/', href: 'http://127.0.0.1/', search: '' },
+    navigator: { platform: 'MacIntel', onLine: true },
+    history: { pushState() {}, replaceState() {} },
+    innerWidth: 1280, innerHeight: 900, document: fakeDoc,
+    addEventListener() {}, removeEventListener() {},
+    setInterval: () => 1, clearInterval() {}, setTimeout: (fn) => { fn(); return 1; }, clearTimeout() {},
+    requestAnimationFrame: () => 1,
+    MutationObserver: class { observe() {} disconnect() {} },
+    console
+  };
+  sandbox.window = sandbox;
+  sandbox.top = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(`const __AG_BOOT_PAYLOAD__ = globalThis.__AG_BOOT_PAYLOAD__;\n${code}`, sandbox);
+  await new Promise((r) => setImmediate(r));
+
+  const quotaEl = fakeDoc.getElementById('ag-quota');
+  assert.ok(quotaEl, '#ag-quota must mount');
+  assert.ok(
+    quotaEl.innerHTML.includes('<span class="ag-quota-hd-name">Gemini 4 Argon</span>'),
+    'Active pool header must display standalone Gemini 4 Argon label'
+  );
+  assert.ok(
+    quotaEl.innerHTML.includes('<span class="ag-quota-o-name">Gemini</span>'),
+    'Idle pool header must remain distinct as Gemini'
+  );
+  assert.ok(
+    quotaEl.innerHTML.includes('<em>14:30 后</em>'),
+    'Compact style must render concise <24h reset label without 后重置 overflow'
+  );
+  assert.ok(
+    quotaEl.innerHTML.includes('<em>4:43 后</em>'),
+    'Rows other-pool style must render concise <24h reset label'
+  );
+  assert.ok(
+    !quotaEl.innerHTML.includes('后重置'),
+    'Compact and rows styles must not emit verbose 后重置 text'
+  );
+
+  for (const fn of sandbox.__ag_cleanup_fns) fn();
+});

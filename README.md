@@ -14,7 +14,7 @@
 </p>
 
 <p>
-  不修改安装包，通过本地 CDP 实时注入，覆盖 36 个独立模块与 81 项单元测试。<br>
+  不修改安装包，通过本地 CDP 实时注入，覆盖 36 个独立模块与 124 项单元测试。<br>
   支持 <code>--only</code> 按需安装、设置面板内一键检查更新与 <code>user/</code> 个人配置热重载。
 </p>
 
@@ -23,12 +23,12 @@
   <img src="https://img.shields.io/static/v1?label=Antigravity&message=2.30.x%20~%202.35.2%2B&color=2B7FFF&labelColor=363636" alt="Antigravity 2.30.x ~ 2.35.2+">
   <img src="https://img.shields.io/static/v1?label=Node.js&message=%3E%3D%2022.13.0&color=339933&labelColor=363636&logo=nodedotjs&logoColor=white" alt="Node.js >= 22.13.0">
   <img src="https://img.shields.io/static/v1?label=platform&message=macOS%20%C2%B7%20Windows%20%C2%B7%20Linux&color=4B5563&labelColor=363636" alt="macOS · Windows · Linux">
-  <img src="https://img.shields.io/static/v1?label=version&message=v1.4.2&color=2B7FFF&labelColor=363636" alt="version v1.4.2">
+  <img src="https://img.shields.io/static/v1?label=version&message=v1.4.3&color=2B7FFF&labelColor=363636" alt="version v1.4.3">
   <a href="LICENSE"><img src="https://img.shields.io/static/v1?label=license&message=MIT&color=10B981&labelColor=363636" alt="MIT License"></a>
 </p>
 
 <p>
-  <a href="#命令行安装"><img src="https://img.shields.io/static/v1?label=CLI%20INSTALL&message=v1.4.2&color=2B7FFF&style=for-the-badge&labelColor=181818&logo=gnubash&logoColor=white" alt="CLI Install"></a>
+  <a href="#命令行安装"><img src="https://img.shields.io/static/v1?label=CLI%20INSTALL&message=v1.4.3&color=2B7FFF&style=for-the-badge&labelColor=181818&logo=gnubash&logoColor=white" alt="CLI Install"></a>
   <a href="#ai-一键安装"><img src="https://img.shields.io/static/v1?label=AI%20ONE-CLICK&message=SKILL.md&color=0D9488&style=for-the-badge&labelColor=181818&logo=googlegemini&logoColor=white" alt="AI One-Click Install"></a>
   <a href="#按需安装"><img src="https://img.shields.io/static/v1?label=SELECTIVE%20INSTALL&message=--only&color=6366F1&style=for-the-badge&labelColor=181818&logo=codesandbox&logoColor=white" alt="Selective Install"></a>
 </p>
@@ -45,8 +45,8 @@ https://github.com/user-attachments/assets/e27c7621-b605-4fdf-9bc3-4fc12da85484
 | **模型额度（面板 + 侧栏独立开关）** | Ink 昼夜双模式展示 `5h` / `7d` 剩余额度与具体重置时间，**统计面板底部与侧栏常驻显示可完全独立开关**，支持 **6 × 6** 样式组合、打开/聚焦/到期自动拉新、被动同步原生「查看用量」及点击手动刷新 | 默认开启 |
 | **原生设置面板与一键更新** | 嵌入 **设置 → Codex 主题**，可视化管理模块开关、额度样式、字体下拉、模型档位、`sshHosts`、手动刷新与面板内直接升级 | 默认内置 |
 | **会话状态与实时用量统计** | 底部四态圆点、一/二级用量面板与每轮悬浮详情卡；支持紧凑/详细动态换行、**分屏多对话独立统计**、旁路提问与可选 **SSH Remote** | 默认开启（SSH 可选） |
-| **中文界面与原生右键菜单汉化** | `2,000+` 词条、额度动态提示及 **Electron 原生右键菜单**全链路汉化，`WeakMap` 原地替换并保护项目/分组/分支名防误翻 | 默认开启 |
-| **输入框下一句预测** | 回复结束后在空输入框显示 Ghost Text，按 `Tab` / `→` 补全，内置 `agy models` 二级级联模型选择器 | **默认关闭**（按需开启） |
+| **中文界面与原生右键菜单汉化** | `2,100+` 词条、额度动态提示、**Swarm 看板**及 **Electron 原生右键菜单**全链路汉化，`WeakMap` 原地替换并保护项目/分组/分支名防误翻 | 默认开启 |
+| **输入框下一句预测** | 回复结束后在空输入框显示 Ghost Text，按 `Tab` / `→` 补全，按对话/分屏/旁路窗格独立指纹隔离防串台，内置 `agy models` 二级级联模型选择器 | **默认关闭**（按需开启） |
 
 ## 快速安装
 
@@ -82,7 +82,7 @@ node install.mjs install --only i18n,metrics
 | 模块 | 说明 |
 | :--- | :--- |
 | `theme` | Codex 浅色 (`codex-pure-white`) 与深色 (`codex-dark`) 昼夜主题与自定义字体 |
-| `i18n` | 中文界面与 Electron 原生右键菜单本地化（`2,000+` 条词条，`WeakMap` 原地更新） |
+| `i18n` | 中文界面、Swarm 看板与 Electron 原生右键菜单本地化（`2,100+` 条词条，`WeakMap` 原地更新） |
 | `metrics` | 实时会话四态指示、一/二级用量面板、每轮统计、分屏多对话支持与模型额度（含可选 SSH Remote） |
 | `fixes` | 设置弹窗路由死锁修复与 `Cmd/Ctrl + -/=/0` 缩放快捷键 |
 | `suggest` | 输入框下一句预测（Ghost Text + `Tab` / `→` 补全，默认关闭） |
@@ -113,7 +113,7 @@ node install.mjs install --only i18n,metrics
 | `node --disable-warning=ExperimentalWarning install.mjs doctor` | 检查 Node 版本、CDP 状态、`core/manifest.json` 哈希及页面挂载状态 |
 | `node --disable-warning=ExperimentalWarning install.mjs verify [--safe-mode]` | 单次注入并校验；`--safe-mode` 跳过 `user/` 自定义脚本以便排障 |
 | `node install.mjs rollback` / `uninstall` | 回滚至上一份 `core/` 备份 / 停止服务并还原英文界面与原生样式 |
-| `npm run check` / `npm test` | 校验全部 `.mjs` 与拼接后的前端脚本语法，运行 81 项 `node:test` 单元测试 |
+| `npm run check` / `npm test` | 校验全部 `.mjs` 与拼接后的前端脚本语法，运行 124 项 `node:test` 单元测试 |
 
 </details>
 
@@ -187,13 +187,13 @@ node install.mjs install --only i18n,metrics
 
 ### 5. 输入框下一句预测（可选，默认关闭）
 
-开启后在回复结束时的空输入框显示 Ghost Text，按 `Tab` / `→` 补全、输入或 `Esc` 隐藏；支持在设置面板通过 `agy models` 二级菜单切换模型与 `Thinking effort`（推荐 `Gemini 3.8 Flash Low`），关闭后立即停止后台进程、零额外消耗。
+开启后在回复结束时的空输入框显示 Ghost Text，按 `Tab` / `→` 补全、输入或 `Esc` 隐藏；按主对话、分屏、旁路提问与子智能体窗格独立维护状态与活跃指纹，避免跨会话串台；支持在设置面板通过 `agy models` 二级菜单切换模型与 `Thinking effort`（推荐 `Gemini 3.8 Flash Low`），关闭后立即停止后台进程、零额外消耗。
 
 ![输入框下一句预测 Ghost Text 与 Tab 补全](assets/prompt-suggestions.png)
 
 ### 6. 中文界面汉化、昼夜主题与实用修复
 
-- **中文界面与原生右键菜单汉化**：内置 `2,000+` 条词条（覆盖 Antigravity `2.30.x` ~ `2.35.2+`、额度耗尽/AI 点数动态提示与 **Electron 原生右键多级菜单**，保留英文模型名与单字项目/分组/分支名防误翻），`WeakMap` 原地更新，支持 [user/i18n.override.json](user/i18n.override.json) 覆写或一键切回英文。
+- **中文界面、Swarm 看板与原生右键菜单汉化**：内置 `2,100+` 条统一术语词条（覆盖 Antigravity `2.30.x` ~ `2.35.2+`、额度耗尽/AI 点数动态提示、**Swarm 看板即时附着与汉化**及 **Electron 原生右键多级菜单**，保留英文模型名与项目/分组/分支名防误翻），`WeakMap` 原地更新，支持 [user/i18n.override.json](user/i18n.override.json) 覆写或一键切回英文。
 - **昼夜主题与实用修复**：纯白浅色（`#FFFFFF` / `#F9F9F9`）与中性炭灰深色（`#181818` / `#232323`）搭配同心圆角悬浮输入框；内置设置弹窗路由死锁修复、`Cmd/Ctrl + -/=/0` 缩放快捷键与 `2.33.0+` 单图标冷启动接力。
 
 ## 自定义与卸载
@@ -219,7 +219,7 @@ node install.mjs install --only i18n,metrics
 </details>
 
 <details>
-<summary>展开：源码模块结构（core/ 36 模块与 81 项单元测试）与本地构建</summary>
+<summary>展开：源码模块结构（core/ 36 模块与 124 项单元测试）与本地构建</summary>
 
 | 定制方向 | 对应文件 |
 | :--- | :--- |
@@ -240,7 +240,7 @@ node install.mjs build-manifest && npm run check && npm test && node install.mjs
 antigravity-codex-theme/
 ├── assets/         # README 展示图
 ├── core/           # daemon/ · runtime/ · styles/ · installer/ · daemon.mjs · shared.mjs · i18n.json · manifest.json
-├── tests/          # 81 项 node:test 单元测试
+├── tests/          # 124 项 node:test 单元测试
 ├── user/           # 个人配置与热重载目录
 ├── install.mjs     # 安装、更新、重启与运维 CLI
 ├── SKILL.md        # AI Agent 操作指南
@@ -270,4 +270,4 @@ antigravity-codex-theme/
 
 ## English Overview
 
-`antigravity-codex-theme` brings Codex light & dark themes, custom local fonts (with pure-Node SFNT auto-discovery for global or split UI / Chat / Code scopes), Ink 5h/7d model quota display (independent toggles for panel footer and sidebar block, 6×6 mix-and-match styles, instant live refresh on open/focus/reset, passive native-usage sync & click-to-refresh), Chinese UI + Electron native right-click context menu localization (`2,000+` in-place `WeakMap` entries with project/branch/group name guards), an embedded native **Settings → Codex Theme** panel with live self-updater, and multi-pane live session telemetry (dynamic width-adaptive wrapping for both `compact` and `detailed` modes, concurrent split-screen multi-conversation tracking, Side Question panes, opt-in read-only SSH Remote, and opt-in Ghost Text prompt suggestions) to Google Antigravity (`2.30.x` – `2.35.2+`) without touching the application bundle. Built as 36 modules with 81 `node:test` unit tests (Node.js `>= 22.13.0`, macOS / Windows / Linux, MIT License).
+`antigravity-codex-theme` brings Codex light & dark themes, custom local fonts (with pure-Node SFNT auto-discovery for global or split UI / Chat / Code scopes), Ink 5h/7d model quota display (independent toggles for panel footer and sidebar block, 6×6 mix-and-match styles, instant live refresh on open/focus/reset, passive native-usage sync & click-to-refresh), Chinese UI, Swarm Board & Electron native right-click context menu localization (`2,100+` in-place `WeakMap` entries with project/branch/group name guards and instant CDP target discovery), an embedded native **Settings → Codex Theme** panel with live self-updater, and multi-pane live session telemetry (dynamic width-adaptive wrapping for both `compact` and `detailed` modes, concurrent split-screen multi-conversation tracking, Side Question panes, opt-in read-only SSH Remote, and opt-in session-isolated Ghost Text prompt suggestions) to Google Antigravity (`2.30.x` – `2.35.2+`) without touching the application bundle. Built as 36 modules with 124 `node:test` unit tests (Node.js `>= 22.13.0`, macOS / Windows / Linux, MIT License).

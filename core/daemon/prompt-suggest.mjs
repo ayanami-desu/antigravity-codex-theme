@@ -228,15 +228,54 @@ export function parseAgyModelsOutput(rawOutput, { includeOrchestrator = false } 
 }
 
 export const PROMPT_SUGGEST_SYSTEM_INSTRUCTION = [
-  '你是一个聊天输入框的「下一句提示词预测器」（类似 Claude Code 的 Prompt Suggestions）。',
-  '我会给你一段刚结束的对话片段（用户的上一条消息 + 助手的最新回复）。',
-  '请站在「用户」的视角，预测用户下一步最可能、最自然想发出的那一句简短指令或追问。',
+  '你是一个无状态的聊天输入框「下一句提示词预测器」（类似 Claude Code 的 Prompt Suggestions）。',
+  '本工作进程会按顺序接收来自完全不同项目、完全不同独立会话的预测请求，每条用户消息都只包含一个独立的 <independent_dialogue_snapshot> 对话快照。',
+  '请站在当前快照中「用户」的视角，预测用户下一步最可能、最自然想发出的那一句简短指令或追问。',
   '严格遵守以下规则：',
-  '1. 只输出预测的那一句话本身，不要任何前缀、引号、解释、编号、Markdown 标记或换行。',
-  '2. 保持与用户语言一致，控制在 4~28 个字以内，具体且可直接执行。',
-  '3. 如果助手的回复已经是一个完整句号、或上下文没有明显高把握的下一步动作，直接输出 NONE（不要硬编废话）。',
-  '4. 绝对不要调用任何工具，直接输出文本。'
+  '1. 【严格跨会话隔离】每条用户消息都是彼此完全隔离的独立快照。你必须彻底忽略本工作进程中之前所有轮次的对话内容、项目背景、文件路径、任务和预测结果，严禁将之前任何会话的内容带入当前预测。',
+  '2. 只输出预测的那一句话本身，不要任何前缀、引号、解释、编号、Markdown 标记或换行。',
+  '3. 保持与当前快照用户语言一致，控制在 4~28 个字以内，具体且可直接执行。',
+  '4. 如果当前快照中的对话已经结束、助手回复已经是一个完整句号、或仅凭当前快照没有明显高把握的下一步动作，直接输出 NONE（严禁借用之前轮次的上下文硬编）。',
+  '5. 绝对不要调用任何工具，直接输出文本。'
 ].join('\n');
+
+function escapeSnapshotTagContent(text) {
+  return String(text || '')
+    .replace(/<independent_dialogue_snapshot(?=\s|>|\/|$)/gi, '<independent_dialogue_snapshot_escaped')
+    .replace(/<\/independent_dialogue_snapshot(?=\s*>)/gi, '</independent_dialogue_snapshot_escaped')
+    .trim();
+}
+
+export function buildPromptSuggestionPrompt({
+  conversationId = '',
+  turnSeq = 0,
+  lastUser = '',
+  lastAssistant = ''
+} = {}) {
+  const safeCid = String(conversationId || '')
+    .replace(/[^a-zA-Z0-9._:/-]/g, '')
+    .slice(0, 64);
+  const attrs = [];
+  if (turnSeq > 0) attrs.push(`request="${turnSeq}"`);
+  if (safeCid) attrs.push(`session="${safeCid}"`);
+  const openTag =
+    attrs.length > 0
+      ? `<independent_dialogue_snapshot ${attrs.join(' ')}>`
+      : '<independent_dialogue_snapshot>';
+  const safeUser = escapeSnapshotTagContent(lastUser);
+  const safeAssistant = escapeSnapshotTagContent(lastAssistant);
+
+  return [
+    '[新独立会话快照：彻底忽略本工作进程之前的所有历史轮次、项目与预测，严禁跨会话复用任何信息；仅依据下方快照预测，若当前快照已结束或无明确下一步，直接输出 NONE]',
+    openTag,
+    safeUser ? `用户：${safeUser}` : '',
+    `助手：${safeAssistant}`,
+    '</independent_dialogue_snapshot>',
+    '仅基于上方 <independent_dialogue_snapshot> 输出用户下一步最可能发的简短指令（4~28字，无解释无引号，若无高把握输出 NONE）：'
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
 
 export function cleanPromptSuggestionText(raw) {
   if (!raw) return '';
@@ -299,6 +338,7 @@ export function resolveAgyCliBinary({ platform = process.platform, env = process
 
 const STOP_KILL_TIMEOUT_MS = 4000;
 const RESTART_GRACE_MS = 150;
+const MAX_QUEUE_SIZE = 6;
 
 export function createPromptSuggestionEngine({
   getConfig,
@@ -308,7 +348,9 @@ export function createPromptSuggestionEngine({
   execFileImpl = execFileAsync,
   stopKillTimeoutMs = STOP_KILL_TIMEOUT_MS,
   restartGraceMs = RESTART_GRACE_MS,
-  maxTurnsPerWorker = MAX_TURNS_PER_WORKER
+  turnTimeoutMs = TURN_TIMEOUT_MS,
+  maxTurnsPerWorker = MAX_TURNS_PER_WORKER,
+  maxQueueSize = MAX_QUEUE_SIZE
 } = {}) {
   let agyBinCache = undefined;
   let proc = null;
@@ -316,6 +358,7 @@ export function createPromptSuggestionEngine({
   let ready = false;
   let warmed = false;
   let turns = 0;
+  let requestSeq = 0;
   let pending = null;
   let starting = false;
   let pendingStart = false;
@@ -364,11 +407,20 @@ export function createPromptSuggestionEngine({
     destroyChildStreams(child);
   }
 
+  function flushQueueUncompleted() {
+    while (queue.length > 0) {
+      const dropped = queue.shift();
+      dropped.resolve({ completed: false, text: '' });
+    }
+  }
+
   function maybeScheduleAfterStopping() {
     if (stoppingProcs.size > 0 || !pendingStart) return;
     pendingStart = false;
     if (isEnabled() && !proc) {
       scheduleStart(restartGraceMs);
+    } else if (!isEnabled()) {
+      flushQueueUncompleted();
     }
   }
 
@@ -435,7 +487,7 @@ export function createPromptSuggestionEngine({
     }
   }
 
-  function stop({ wantRestart = false, terminateAll = false } = {}) {
+  function stop({ wantRestart = false, terminateAll = false, preserveQueue = false } = {}) {
     if (restartTimer) {
       clearTimeout(restartTimer);
       restartTimer = null;
@@ -452,12 +504,11 @@ export function createPromptSuggestionEngine({
       clearTimeout(cur.timer);
       if (!cur.settled) {
         cur.settled = true;
-        cur.resolve('');
+        cur.resolve({ completed: false, text: '' });
       }
     }
-    while (queue.length > 0) {
-      const dropped = queue.shift();
-      dropped.resolve('');
+    if (!preserveQueue) {
+      flushQueueUncompleted();
     }
     if (old) {
       retireChild(old, { wantRestart });
@@ -477,13 +528,18 @@ export function createPromptSuggestionEngine({
     if (restartTimer) clearTimeout(restartTimer);
     restartTimer = setTimeout(() => {
       restartTimer = null;
-      if (isEnabled()) ensureStarted();
+      if (isEnabled()) {
+        if (!ensureStarted()) flushQueueUncompleted();
+      } else {
+        flushQueueUncompleted();
+      }
     }, delayMs);
     if (typeof restartTimer.unref === 'function') restartTimer.unref();
   }
 
-  function restart() {
-    stop({ wantRestart: isEnabled() });
+  function restart({ preserveQueue = false } = {}) {
+    const enabled = isEnabled();
+    stop({ wantRestart: enabled, preserveQueue: Boolean(preserveQueue && enabled) });
   }
 
   function sendWarmup() {
@@ -518,6 +574,11 @@ export function createPromptSuggestionEngine({
 
   function drain() {
     if (pending || !warmed || queue.length === 0) return;
+    while (queue.length > 0 && queue[0].fingerprint && cache.has(queue[0].fingerprint)) {
+      const hit = queue.shift();
+      hit.resolve({ completed: true, text: cache.get(hit.fingerprint), fromCache: true });
+    }
+    if (queue.length === 0) return;
     if (!proc || proc.killed || proc.exitCode !== null) {
       ensureStarted();
       return;
@@ -531,11 +592,11 @@ export function createPromptSuggestionEngine({
         pending = null;
         if (!cur.settled) {
           cur.settled = true;
-          item.resolve('');
+          item.resolve({ completed: false, text: '' });
         }
         restart();
       }
-    }, TURN_TIMEOUT_MS);
+    }, turnTimeoutMs);
 
     pending = {
       owner,
@@ -550,8 +611,11 @@ export function createPromptSuggestionEngine({
       owner.stdin.write(JSON.stringify({ event: 'user', message: { content: item.promptText } }) + '\n');
     } catch {
       clearTimeout(timer);
-      if (pending && pending.owner === owner) pending = null;
-      item.resolve('');
+      if (pending && pending.owner === owner) {
+        pending.settled = true;
+        pending = null;
+      }
+      item.resolve({ completed: false, text: '' });
       if (proc === owner) restart();
     }
   }
@@ -571,7 +635,10 @@ export function createPromptSuggestionEngine({
     }
     if (starting) return true;
     const bin = getAgyBin();
-    if (!bin) return false;
+    if (!bin) {
+      flushQueueUncompleted();
+      return false;
+    }
 
     starting = true;
     pendingStart = false;
@@ -614,10 +681,7 @@ export function createPromptSuggestionEngine({
       );
     } catch {
       starting = false;
-      while (queue.length > 0) {
-        const dropped = queue.shift();
-        dropped.resolve('');
-      }
+      flushQueueUncompleted();
       return false;
     }
 
@@ -651,7 +715,7 @@ export function createPromptSuggestionEngine({
             if (su.text_delta) pending.chunks.push(String(su.text_delta));
             if (su.state === 'DONE' && !pending.settled && pending.chunks.length > 0) {
               pending.settled = true;
-              pending.resolve(pending.chunks.join('').trim());
+              pending.resolve({ completed: true, text: pending.chunks.join('').trim() });
             }
           }
         } else if (evt.event === 'result') {
@@ -661,8 +725,12 @@ export function createPromptSuggestionEngine({
             clearTimeout(cur.timer);
             if (!cur.settled) {
               cur.settled = true;
+              const hasErr = Boolean(
+                evt.is_error ||
+                (evt.result && (evt.result.is_error || (evt.result.error && !evt.result.response)))
+              );
               const raw = String((evt.result && evt.result.response) || cur.chunks.join('') || '').trim();
-              cur.resolve(raw);
+              cur.resolve({ completed: !hasErr, text: hasErr ? '' : raw });
             }
           }
           if (!warmed) {
@@ -671,7 +739,7 @@ export function createPromptSuggestionEngine({
             turns += 1;
           }
           if (turns >= maxTurnsPerWorker) {
-            restart();
+            restart({ preserveQueue: true });
             return;
           }
           drain();
@@ -695,11 +763,13 @@ export function createPromptSuggestionEngine({
         clearTimeout(cur.timer);
         if (!cur.settled) {
           cur.settled = true;
-          cur.resolve('');
+          cur.resolve({ completed: false, text: '' });
         }
       }
       if (queue.length > 0 && isEnabled()) {
         scheduleStart(800);
+      } else if (queue.length > 0) {
+        flushQueueUncompleted();
       }
     });
 
@@ -714,41 +784,72 @@ export function createPromptSuggestionEngine({
     ensureStarted();
   }
 
-  async function suggest({ fingerprint = '', lastUser = '', lastAssistant = '' } = {}) {
-    if (!isEnabled() || !lastAssistant) return '';
-    if (fingerprint && cache.has(fingerprint)) {
-      return cache.get(fingerprint);
+  async function suggestWithMeta({
+    fingerprint = '',
+    conversationId = '',
+    scopeId = '',
+    lastUser = '',
+    lastAssistant = ''
+  } = {}) {
+    if (!isEnabled() || !lastAssistant) {
+      return { completed: false, suggestion: '' };
     }
-    const promptText = [
-      '根据以下刚结束的对话片段，输出用户下一步最可能发的简短指令（4~28字，无解释无引号，若无高把握输出 NONE）：',
-      lastUser ? `用户：${lastUser}` : '',
-      `助手：${lastAssistant}`
-    ]
-      .filter(Boolean)
-      .join('\n');
+    if (fingerprint && cache.has(fingerprint)) {
+      return { completed: true, suggestion: cache.get(fingerprint) };
+    }
 
-    const raw = await new Promise((resolve) => {
+    requestSeq += 1;
+    const effectiveScope = String(scopeId || conversationId || '').trim();
+    const promptText = buildPromptSuggestionPrompt({
+      conversationId,
+      turnSeq: requestSeq,
+      lastUser,
+      lastAssistant
+    });
+
+    const outcome = await new Promise((resolve) => {
       if (!ensureStarted()) {
-        resolve('');
+        resolve({ completed: false, text: '' });
         return;
       }
-      while (queue.length > 0) {
-        const dropped = queue.shift();
-        dropped.resolve('');
+      // Supersede older queued requests ONLY for the same conversation/scope so split-screen panes do not drop each other.
+      for (let i = queue.length - 1; i >= 0; i--) {
+        if (queue[i].scopeKey === effectiveScope) {
+          const [dropped] = queue.splice(i, 1);
+          dropped.resolve({ completed: false, text: '' });
+        }
       }
-      queue.push({ promptText, resolve });
+      const cap = Math.max(1, Number(maxQueueSize) || MAX_QUEUE_SIZE);
+      while (queue.length >= cap) {
+        const evicted = queue.shift();
+        evicted.resolve({ completed: false, text: '' });
+      }
+      queue.push({ scopeKey: effectiveScope, fingerprint, promptText, resolve });
       if (warmed) drain();
     });
 
-    const suggestion = cleanPromptSuggestionText(raw);
-    if (fingerprint) {
+    if (outcome && outcome.fromCache) {
+      return {
+        completed: true,
+        suggestion: typeof outcome.text === 'string' ? outcome.text : ''
+      };
+    }
+    const completed = Boolean(outcome && outcome.completed);
+    const raw = outcome && typeof outcome.text === 'string' ? outcome.text : '';
+    const suggestion = completed ? cleanPromptSuggestionText(raw) : '';
+    if (completed && fingerprint) {
       if (cache.size >= CACHE_LIMIT) {
         const oldestKey = cache.keys().next().value;
         cache.delete(oldestKey);
       }
       cache.set(fingerprint, suggestion);
     }
-    return suggestion;
+    return { completed, suggestion };
+  }
+
+  async function suggest(params = {}) {
+    const res = await suggestWithMeta(params);
+    return res.suggestion;
   }
 
   async function listModels({ force = false } = {}) {
@@ -818,6 +919,7 @@ export function createPromptSuggestionEngine({
   return {
     syncState,
     suggest,
+    suggestWithMeta,
     stop,
     listModels,
     getStatus: () => ({
